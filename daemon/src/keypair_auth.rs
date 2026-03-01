@@ -1,6 +1,6 @@
 use super::{Res, print_err};
 use crate::{
-    BoxedError, connection::handle_client_connection, rate_limit::RateLimiter,
+    BoxedError, connection::handle_client_connection, context::Context,
 };
 use libssh0::{log, timeout};
 use notify::{
@@ -16,9 +16,9 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
-use tokio_rustls::{TlsAcceptor, server::TlsStream};
+use tokio_rustls::server::TlsStream;
 
-type AuthorizedKeys = Arc<RwLock<Arc<[PublicKey]>>>;
+pub type AuthorizedKeys = Arc<RwLock<Arc<[PublicKey]>>>;
 
 pub fn watch_authorized_keys(path: &Path) -> Res<AuthorizedKeys> {
     let keys = Arc::new(RwLock::new(load_authorized_keys(path)?.into()));
@@ -60,12 +60,13 @@ pub fn load_authorized_keys(
 pub async fn authenticate_and_accept_connection(
     stream: TcpStream,
     address: SocketAddr,
-    authorized_keys: Arc<[PublicKey]>,
-    acceptor: TlsAcceptor,
-    rate_limiter: Arc<RateLimiter>,
+    context: Arc<Context>,
 ) -> Res<()> {
+    let authorized_keys = context.authorized_keys.read().unwrap().clone();
+    let rate_limiter = Arc::clone(&context.rate_limiter);
+
     let socket = async move {
-        let mut socket = timeout(acceptor.accept(stream)).await??;
+        let mut socket = timeout(context.acceptor.accept(stream)).await??;
 
         timeout(authenticate(&mut socket, &authorized_keys))
             .await?
