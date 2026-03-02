@@ -10,7 +10,10 @@ use std::{
     io::{Read, Write},
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
+    io::{
+        AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
+        ErrorKind::UnexpectedEof, WriteHalf,
+    },
     select, spawn,
     sync::mpsc::{Receiver, Sender, channel},
     task::spawn_blocking,
@@ -58,16 +61,22 @@ where
     loop {
         select! {
             _ = &mut pty_read => {
-                log!("{session} closed by the client");
+                log!("{session} closed");
                 break
             },
             () = session.token.cancelled() => {
                 pty_read.abort();
                 break;
             },
-            result = tcp_rx.read(&mut buf) => {
-                let n = result?;
-                break_if!(n == 0 || write_tx.send(buf[..n].to_vec()).await.is_err());
+            result = tcp_rx.read(&mut buf) => match result {
+                Ok(n) => break_if!(
+                    n == 0 || write_tx.send(buf[..n].to_vec()).await.is_err()
+                ),
+                Err(e) if e.kind() == UnexpectedEof => {
+                    log!("{session} closed");
+                    break;
+                }
+                Err(e) => return Err(e.into()),
             }
         }
     }
