@@ -99,6 +99,8 @@ pub async fn authenticate(
     mut stream: &mut TlsStream<TcpStream>,
     authorized_keys: &[PublicKey],
 ) -> Res<PublicKey> {
+    handshake(stream).await?;
+
     let challenge = rand::random::<[u8; 32]>();
     stream.write_all(&challenge).await?;
 
@@ -128,6 +130,20 @@ pub async fn authenticate(
     stream.flush().await?;
 
     Ok(matched_key)
+}
+
+// mut stream &mut is painful, but the macro requires it
+async fn handshake(mut stream: &mut TlsStream<TcpStream>) -> Res<()> {
+    stream.write_all(b"Keygen").await?;
+    let response = read_exact!(stream, 6).await?;
+
+    if &response != b"Church" {
+        kill_stream(stream, "Invalid handshake").await?;
+    }
+
+    stream.write_all(b"PRAISE THE CODE!").await?;
+
+    Ok(())
 }
 
 async fn kill_stream(

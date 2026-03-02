@@ -117,6 +117,8 @@ async fn authenticate(
     mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     private_key: PrivateKey,
 ) -> Res<()> {
+    handshake(stream).await?;
+
     let challenge = read_exact!(stream, 32).await?;
 
     let signature = private_key
@@ -133,6 +135,25 @@ async fn authenticate(
         return Err("Authentication failed".into());
     }
 
+    Ok(())
+}
+
+async fn handshake(
+    mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+) -> Res<()> {
+    let keygen = read_exact!(stream, 6).await?;
+    if &keygen != b"Keygen" {
+        return Err("Invalid Handshake".into());
+    }
+
+    stream.write_all(b"Church").await?;
+    let response = read_exact!(stream, 16).await?;
+
+    if &response != b"PRAISE THE CODE!" {
+        return Err("Invalid Handshake".into());
+    }
+
+    println!("PRAISE THE CODE!");
     Ok(())
 }
 
