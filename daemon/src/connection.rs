@@ -12,8 +12,12 @@ use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
     task::spawn_blocking,
 };
+use tokio_util::sync::CancellationToken;
 
-pub async fn handle_client_connection<S>(socket: S) -> Res<S>
+pub async fn handle_client_connection<S>(
+    socket: S,
+    token: CancellationToken,
+) -> Res<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -39,15 +43,22 @@ where
     let (pty_tx, pty_rx) = channel::<Vec<u8>>(32);
 
     let mut pty_read = spawn_blocking(move || read_pty(reader, pty_tx));
-    let tcp_tx_handle = spawn(forward_to_tcp(pty_rx, tcp_tx));
+
+    let fwd_token = CancellationToken::new();
+    let tcp_tx_handle =
+        spawn(forward_to_tcp(pty_rx, tcp_tx, fwd_token.clone()));
 
     let (write_tx, write_rx) = channel::<Vec<u8>>(32);
-    spawn_blocking(move || write_pty(writer, write_rx)); // one long-lived thread, like read_pty
+    spawn_blocking(move || write_pty(writer, write_rx));
 
     let mut buf = [0u8; 1024];
     loop {
         select! {
             _ = &mut pty_read => break,
+            () = token.cancelled() => {
+                pty_read.abort();
+                break;
+            },
             result = tcp_rx.read(&mut buf) => {
                 let n = result?;
                 break_if!(n == 0 || write_tx.send(buf[..n].to_vec()).await.is_err());
@@ -55,6 +66,7 @@ where
         }
     }
 
+    fwd_token.cancel();
     Ok(tcp_rx.unsplit(tcp_tx_handle.await?))
 }
 
@@ -82,9 +94,18 @@ pub fn write_pty(mut writer: Box<dyn Write + Send>, mut rx: Receiver<Vec<u8>>) {
 pub async fn forward_to_tcp<S: AsyncWrite>(
     mut rx: Receiver<Vec<u8>>,
     mut tcp_tx: WriteHalf<S>,
+    token: CancellationToken,
 ) -> WriteHalf<S> {
-    while let Some(data) = rx.recv().await {
-        break_if!(tcp_tx.write_all(&data).await.is_err());
+    loop {
+        select! {
+            () = token.cancelled() => break,
+            data = rx.recv() => {
+                match data {
+                    Some(data) => break_if!(tcp_tx.write_all(&data).await.is_err()),
+                    None => break,
+                }
+            }
+        }
     }
     tcp_tx
 }

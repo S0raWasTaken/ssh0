@@ -1,6 +1,7 @@
 use super::{Res, print_err};
 use crate::{
     BoxedError, connection::handle_client_connection, context::Context,
+    fingerprint, sessions::SessionRegistry,
 };
 use libssh0::{log, timeout};
 use notify::{
@@ -20,7 +21,10 @@ use tokio_rustls::server::TlsStream;
 
 pub type AuthorizedKeys = Arc<RwLock<Arc<[PublicKey]>>>;
 
-pub fn watch_authorized_keys(path: &Path) -> Res<AuthorizedKeys> {
+pub fn watch_authorized_keys(
+    path: &Path,
+    sessions: Arc<SessionRegistry>,
+) -> Res<AuthorizedKeys> {
     let keys = Arc::new(RwLock::new(load_authorized_keys(path)?.into()));
     let keys_clone = Arc::clone(&keys);
 
@@ -33,6 +37,10 @@ pub fn watch_authorized_keys(path: &Path) -> Res<AuthorizedKeys> {
             {
                 match load_authorized_keys(&auth_keys_path) {
                     Ok(new_keys) => {
+                        let active_fingerprints =
+                            new_keys.iter().map(fingerprint).collect();
+
+                        sessions.kill_unlisted(&active_fingerprints);
                         *keys_clone.write().unwrap() = new_keys.into();
                     }
                     Err(e) => print_err(&e),
@@ -65,22 +73,26 @@ pub async fn authenticate_and_accept_connection(
     let authorized_keys = context.authorized_keys.read().unwrap().clone();
     let rate_limiter = Arc::clone(&context.rate_limiter);
 
-    let socket = async move {
-        let mut socket = timeout(context.acceptor.accept(stream)).await??;
+    let ctx = Arc::clone(&context);
+    let (socket, public_key) = async move {
+        let mut socket = timeout(ctx.acceptor.accept(stream)).await??;
 
-        timeout(authenticate(&mut socket, &authorized_keys))
+        let public_key = timeout(authenticate(&mut socket, &authorized_keys))
             .await?
             .inspect_err(|_| {
                 log!(e "Signature verification failed for {address}");
             })?;
-        Ok::<_, BoxedError>(socket)
+        Ok::<_, BoxedError>((socket, public_key))
     }
     .await
     .inspect_err(|_| rate_limiter.increment(address.ip()))?;
 
     log!("Authorized connection from {address}");
 
-    let mut socket = handle_client_connection(socket).await?;
+    let (token, _session_guard) =
+        context.register_session(fingerprint(&public_key));
+
+    let mut socket = handle_client_connection(socket, token).await?;
 
     socket.shutdown().await?;
     Ok(())
@@ -89,7 +101,7 @@ pub async fn authenticate_and_accept_connection(
 pub async fn authenticate(
     stream: &mut TlsStream<TcpStream>,
     authorized_keys: &[PublicKey],
-) -> Res<()> {
+) -> Res<PublicKey> {
     let challenge = rand::random::<[u8; 32]>();
     stream.write_all(&challenge).await?;
 
@@ -109,23 +121,24 @@ pub async fn authenticate(
         Err(e) => return kill_stream(stream, e).await,
     };
 
-    if !authorized_keys
+    let matched_key = match authorized_keys
         .iter()
-        .any(|entry| entry.verify("ssh0-auth", &challenge, &signature).is_ok())
+        .find(|e| e.verify("ssh0-auth", &challenge, &signature).is_ok())
     {
-        return kill_stream(stream, "Unauthorized").await;
-    }
+        Some(key) => key.clone(),
+        None => return kill_stream(stream, "Unauthorized").await,
+    };
 
     stream.write_all(&[1]).await?;
     stream.flush().await?;
 
-    Ok(())
+    Ok(matched_key)
 }
 
 async fn kill_stream(
     stream: &mut TlsStream<TcpStream>,
     error: impl Into<BoxedError>,
-) -> Res<()> {
+) -> Res<PublicKey> /*Never fulfilled, obviously*/ {
     stream.write_all(&[0]).await?;
     stream.flush().await?;
     stream.shutdown().await?;
