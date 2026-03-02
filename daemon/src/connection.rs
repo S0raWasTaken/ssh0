@@ -1,6 +1,9 @@
+use crate::sessions::SessionInfo;
+
 use super::{Res, print_err};
 use libssh0::DropGuard;
 use libssh0::break_if;
+use libssh0::log;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::{
     env,
@@ -16,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 pub async fn handle_client_connection<S>(
     socket: S,
-    token: CancellationToken,
+    session: SessionInfo,
 ) -> Res<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -54,8 +57,11 @@ where
     let mut buf = [0u8; 1024];
     loop {
         select! {
-            _ = &mut pty_read => break,
-            () = token.cancelled() => {
+            _ = &mut pty_read => {
+                log!("{session} closed by the client");
+                break
+            },
+            () = session.token.cancelled() => {
                 pty_read.abort();
                 break;
             },

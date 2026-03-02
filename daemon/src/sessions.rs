@@ -4,7 +4,6 @@ use std::{
     collections::HashSet,
     fmt::Display,
     net::SocketAddr,
-    ptr::from_ref,
     sync::{
         Weak,
         atomic::{AtomicUsize, Ordering},
@@ -73,11 +72,9 @@ impl SessionRegistry {
         (session.clone(), SessionGuard { registry: weak, fingerprint, session })
     }
 
-    fn unregister(&self, fingerprint: &str, token: &CancellationToken) {
+    fn unregister(&self, fingerprint: &str, id: usize) {
         if let Some(mut tokens) = self.sessions.get_mut(fingerprint) {
-            tokens.retain(|info| {
-                !std::ptr::eq(from_ref(&info.token), from_ref(token))
-            });
+            tokens.retain(|info| info.id != id);
         }
     }
 
@@ -103,8 +100,7 @@ pub struct SessionGuard {
 impl Drop for SessionGuard {
     fn drop(&mut self) {
         if let Some(registry) = self.registry.upgrade() {
-            log!("{} dropped", self.session);
-            registry.unregister(&self.fingerprint, &self.session.token);
+            registry.unregister(&self.fingerprint, self.session.id);
         }
     }
 }
