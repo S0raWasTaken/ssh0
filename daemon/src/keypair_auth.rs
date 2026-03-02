@@ -85,6 +85,7 @@ pub async fn authenticate_and_accept_connection(
     .inspect_err(|_| rate_limiter.increment(address.ip()))?;
 
     log!("Authorized connection from {address}");
+    context.rate_limiter.reset(address.ip());
 
     let (session, _session_guard) =
         context.register_session(fingerprint(&public_key), address);
