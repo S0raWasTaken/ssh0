@@ -16,6 +16,7 @@ rand = "0.10.0"
 dashmap = "6.1.0"
 argh = "0.1.14"
 notify = "8.2.0"
+tokio-util = "0.7.18"
 
 [lints]
 workspace = true

@@ -3,6 +3,7 @@ use std::time::Duration;
 mod dropguard;
 pub use chrono;
 pub use dropguard::DropGuard;
+pub use tokio;
 
 /// Wraps a future with a 10-second timeout.
 ///
@@ -44,4 +45,41 @@ macro_rules! break_if {
             break;
         }
     };
+}
+
+/// Reads an exact number of bytes from an async stream into a `Vec<u8>`.
+///
+/// # Usage
+/// ```
+/// let signature = read!(stream, signature_length).await?;
+/// ```
+#[macro_export]
+macro_rules! read {
+    ($stream:expr, $len:expr) => {{
+        async {
+            let mut buf = vec![0u8; $len];
+            $crate::tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf)
+                .await?;
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(buf)
+        }
+    }};
+}
+
+/// Reads an exact number of bytes from an async stream into a fixed-size array.
+/// Length must be a const.
+///
+/// # Usage
+/// ```
+/// let greeting = read_exact!(stream, 6).await?;
+/// ```
+#[macro_export]
+macro_rules! read_exact {
+    ($stream:expr, $len:expr) => {{
+        async {
+            let mut buf = [0u8; $len];
+            $crate::tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf)
+                .await?;
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(buf)
+        }
+    }};
 }

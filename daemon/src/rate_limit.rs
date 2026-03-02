@@ -24,6 +24,10 @@ impl RateLimiter {
         entry.0 += 1;
     }
 
+    pub fn reset(&self, ip: IpAddr) {
+        self.attempts.remove(&ip);
+    }
+
     pub fn is_allowed(&self, ip: IpAddr) -> bool {
         self.attempts.get(&ip).is_none_or(|entry| entry.0 < self.max_attempts)
     }

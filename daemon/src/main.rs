@@ -1,26 +1,47 @@
 use crate::{
     args::Args,
-    keypair_auth::{authenticate_and_accept_connection, watch_authorized_keys},
+    context::{Context, HostAndPort},
+    keypair_auth::authenticate_and_accept_connection,
     rate_limit::RateLimiter,
+    sessions::SessionRegistry,
     tls::make_acceptor,
+    watcher::watch_authorized_keys,
 };
 use libssh0::log;
+use ssh_key::PublicKey;
 use std::{fmt::Display, fs::create_dir_all, sync::Arc, time::Duration};
-use tokio::{
-    io::AsyncWriteExt, net::TcpListener, spawn, sync::Semaphore, time::sleep,
-};
+use tokio::{io::AsyncWriteExt, net::TcpListener, spawn, sync::Semaphore};
 
 pub type BoxedError = Box<dyn std::error::Error + Send + Sync>;
 pub type Res<T> = Result<T, BoxedError>;
 
 mod args;
 mod connection;
+mod context;
 mod keypair_auth;
 mod rate_limit;
+mod sessions;
 mod tls;
+mod watcher;
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn main() -> Res<()> {
+    let context = setup()?;
+
+    let listener = TcpListener::bind(context.host_and_port.inner()).await?;
+    log!("Listening on {}", context.host_and_port);
+
+    context.spawn_rate_limiter_task();
+
+    loop {
+        accept_new_connection(&listener, context.clone())
+            .await
+            .inspect_err(print_err)
+            .ok();
+    }
+}
+
+fn setup() -> Res<Arc<Context>> {
     let args: Args = argh::from_env();
     let Args { host, port, .. } = args;
 
@@ -32,59 +53,49 @@ async fn main() -> Res<()> {
 
     create_dir_all(&config_dir)?;
 
-    // Acceptable leak, only occurs once, and it will be used as long as the
-    // daemon is running
-    let authorized_keys_path = config_dir.join("authorized_keys").leak();
-    let authorized_keys = watch_authorized_keys(authorized_keys_path)?;
+    let sessions = Arc::new(SessionRegistry::new());
+    Ok(Context::new(
+        make_acceptor(&config_dir)?,
+        watch_authorized_keys(&config_dir, sessions.clone())?,
+        RateLimiter::new(3, Duration::from_mins(30)),
+        Semaphore::new(100),
+        HostAndPort::new(host, port),
+        sessions,
+    ))
+}
 
-    let listener = TcpListener::bind((&*host, port)).await?;
-    log!("Listening on {host}:{port}");
+async fn accept_new_connection(
+    listener: &TcpListener,
+    context: Arc<Context>,
+) -> Res<()> {
+    let (mut stream, address) = listener.accept().await?;
 
-    let acceptor = make_acceptor(&config_dir)?;
+    let context = Arc::clone(&context);
+    let Ok(permit) = Arc::clone(&context.semaphore).try_acquire_owned() else {
+        stream.shutdown().await.ok();
+        return Ok(());
+    };
 
-    let rate_limiter = Arc::new(RateLimiter::new(3, Duration::from_mins(30)));
-    let rl = Arc::clone(&rate_limiter);
+    if !context.rate_limiter.is_allowed(address.ip()) {
+        stream.shutdown().await.ok();
+        return Ok(());
+    }
+
+    log!("Sending challenge to {address}");
+
     spawn(async move {
-        loop {
-            sleep(Duration::from_mins(5)).await;
-            rl.cleanup();
-        }
-    });
-
-    let semaphore = Arc::new(Semaphore::new(100));
-
-    loop {
-        let (mut stream, address) = listener.accept().await?;
-
-        let Ok(permit) = Arc::clone(&semaphore).try_acquire_owned() else {
-            stream.shutdown().await.ok();
-            continue;
-        };
-
-        if !rate_limiter.is_allowed(address.ip()) {
-            stream.shutdown().await.ok();
-            continue;
-        }
-
-        log!(e "Sending challenge to {address}");
-
-        let authorized_keys = authorized_keys.read().unwrap().clone();
-        let acceptor = acceptor.clone();
-        let rate_limiter = Arc::clone(&rate_limiter);
-
-        spawn(async move {
-            let _permit = permit;
-            authenticate_and_accept_connection(
-                stream,
-                address,
-                authorized_keys,
-                acceptor,
-                rate_limiter,
-            )
+        let _permit = permit;
+        authenticate_and_accept_connection(stream, address, context)
             .await
             .inspect_err(print_err)
-        });
-    }
+    });
+    Ok(())
+}
+
+#[inline]
+#[must_use]
+pub fn fingerprint(e: &PublicKey) -> String {
+    e.fingerprint(ssh_key::HashAlg::Sha256).to_string()
 }
 
 fn print_err<E: Display>(e: &E) {
