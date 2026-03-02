@@ -2,8 +2,7 @@ use libssh0::break_if;
 use tokio::sync::mpsc::Sender;
 
 #[cfg(not(windows))]
-#[expect(clippy::needless_pass_by_value)]
-pub fn read_stdin(tx: Sender<Vec<u8>>) {
+pub fn read_stdin(tx: &Sender<Vec<u8>>) {
     use std::io::{Read, stdin};
 
     let mut buf = [0u8; 1024];
