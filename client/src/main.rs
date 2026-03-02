@@ -50,7 +50,7 @@ async fn main() -> Res<()> {
     let (mut tcp_rx, tcp_tx) = tokio::io::split(stream);
     let (stdin_tx, stdin_rx) = channel::<Vec<u8>>(32);
 
-    spawn_blocking(move || read_stdin(stdin_tx));
+    spawn_blocking(move || read_stdin(&stdin_tx));
     spawn(forward_to_server(stdin_rx, tcp_tx));
 
     let mut buf = [0u8; 1024];

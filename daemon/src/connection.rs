@@ -42,7 +42,7 @@ where
     let (mut tcp_rx, tcp_tx) = tokio::io::split(socket);
     let (pty_tx, pty_rx) = channel::<Vec<u8>>(32);
 
-    let mut pty_read = spawn_blocking(move || read_pty(reader, pty_tx));
+    let mut pty_read = spawn_blocking(move || read_pty(reader, &pty_tx));
 
     let fwd_token = CancellationToken::new();
     let tcp_tx_handle =
@@ -70,8 +70,7 @@ where
     Ok(tcp_rx.unsplit(tcp_tx_handle.await?))
 }
 
-#[expect(clippy::needless_pass_by_value)]
-pub fn read_pty(mut reader: Box<dyn Read + Send>, tx: Sender<Vec<u8>>) {
+pub fn read_pty(mut reader: Box<dyn Read + Send>, tx: &Sender<Vec<u8>>) {
     let mut buf = [0u8; 1024];
     loop {
         match reader.read(&mut buf) {
