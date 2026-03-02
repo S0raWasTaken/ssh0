@@ -50,7 +50,13 @@ fn watch(
     sessions: &Arc<SessionRegistry>,
     keys: &AuthorizedKeys,
 ) {
-    let Ok(event) = event else { return };
+    let event = match event {
+        Ok(event) => event,
+        Err(e) => {
+            print_err(&e);
+            return;
+        }
+    };
 
     if !event.paths.iter().any(|p| p == authorized_keys_path) {
         return;
