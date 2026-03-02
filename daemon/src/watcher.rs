@@ -11,7 +11,9 @@ use std::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering::Relaxed},
     },
+    time::Duration,
 };
+use tokio::{runtime::Handle, time::sleep};
 
 pub type AuthorizedKeys = Arc<RwLock<Arc<[PublicKey]>>>;
 
@@ -32,9 +34,17 @@ pub fn watch_authorized_keys(
     ));
     let keys_clone = Arc::clone(&keys);
 
+    let tokio_handle = Handle::current();
+
     let mut watcher =
         recommended_watcher(move |event: notify::Result<Event>| {
-            watch(event, &authorized_keys_path, &sessions, &keys_clone);
+            watch(
+                event,
+                &authorized_keys_path,
+                &sessions,
+                &keys_clone,
+                &tokio_handle,
+            );
         })?;
 
     watcher.watch(config_dir, NonRecursive)?;
@@ -49,6 +59,7 @@ fn watch(
     authorized_keys_path: &Path,
     sessions: &Arc<SessionRegistry>,
     keys: &AuthorizedKeys,
+    tokio_handle: &Handle,
 ) {
     let event = match event {
         Ok(event) => event,
@@ -66,8 +77,13 @@ fn watch(
         EventKind::Modify(_) | EventKind::Create(_) => {
             match load_authorized_keys(authorized_keys_path) {
                 Ok(new_keys) => {
-                    if let ControlFlow::Break(()) = check_atomic_save(&new_keys)
-                    {
+                    if let ControlFlow::Break(()) = check_atomic_save(
+                        &new_keys,
+                        authorized_keys_path,
+                        sessions,
+                        keys,
+                        tokio_handle,
+                    ) {
                         return;
                     }
 
@@ -97,25 +113,41 @@ fn load_authorized_keys(authorized_keys_path: &Path) -> Res<Vec<PublicKey>> {
         .collect::<Vec<_>>())
 }
 
-// Most text editors save files in two steps (truncate then write),
-// which is why we ignore the first empty reload.
-//
-// Although, this introduces an issue where intentionally emptying
-// the file would not kill all active connections, since now only a
-// single step happens, which is the truncation step.
-//
-// The user shall be instructed to delete `authorized_keys` (or save it twice)
-// if he actually wants to kill all active sessions.
+static EMPTY_CHECK_TASK: AtomicBool = AtomicBool::new(false);
 
-static EMPTY_SEEN: AtomicBool = AtomicBool::new(false);
+fn check_atomic_save(
+    new_keys: &[PublicKey],
+    authorized_keys_path: &Path,
+    sessions: &Arc<SessionRegistry>,
+    keys: &AuthorizedKeys,
+    tokio_handle: &Handle,
+) -> ControlFlow<()> {
+    if new_keys.is_empty() && !EMPTY_CHECK_TASK.swap(true, Relaxed) {
+        let path = authorized_keys_path.to_path_buf();
+        let sessions = Arc::clone(sessions);
+        let keys = Arc::clone(keys);
 
-fn check_atomic_save(new_keys: &[PublicKey]) -> ControlFlow<()> {
-    if new_keys.is_empty() {
-        if !EMPTY_SEEN.swap(true, Relaxed) {
-            return ControlFlow::Break(());
-        }
-    } else {
-        EMPTY_SEEN.store(false, Relaxed);
+        tokio_handle.spawn(async move {
+            sleep(Duration::from_millis(10)).await;
+            EMPTY_CHECK_TASK.store(false, Relaxed);
+
+            recheck(&path, &sessions, &keys);
+        });
+
+        return ControlFlow::Break(());
     }
     ControlFlow::Continue(())
+}
+
+fn recheck(
+    path: &Path,
+    sessions: &Arc<SessionRegistry>,
+    keys: &Arc<RwLock<Arc<[PublicKey]>>>,
+) {
+    if let Ok(recheck) = load_authorized_keys(path)
+        && recheck.is_empty()
+    {
+        sessions.kill_all();
+        *keys.write().unwrap() = Arc::from([]);
+    }
 }
