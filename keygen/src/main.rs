@@ -19,7 +19,7 @@ fn main() -> Res<()> {
 
     let pair = make_key_pair(args.r#type.into())?;
     create_dir_all(&output_path)?;
-    save(pair, &output_path)
+    save(pair, &output_path, args.passphrase)
 }
 
 fn make_key_pair(algorithm: Algorithm) -> Res<KeyPair> {
@@ -28,7 +28,11 @@ fn make_key_pair(algorithm: Algorithm) -> Res<KeyPair> {
     Ok((private_key.public_key().clone(), private_key))
 }
 
-fn save((public_key, mut private_key): KeyPair, output: &Path) -> Res<()> {
+fn save(
+    (public_key, mut private_key): KeyPair,
+    output: &Path,
+    passphrase: Option<String>,
+) -> Res<()> {
     let algorithm = match private_key.algorithm() {
         Algorithm::Ed25519 => "id_ed25519",
         Algorithm::Rsa { .. } => "id_rsa",
@@ -38,8 +42,10 @@ fn save((public_key, mut private_key): KeyPair, output: &Path) -> Res<()> {
     let pub_path = output.join(format!("{algorithm}.pub"));
     let priv_path = output.join(algorithm);
 
-    let passphrase =
-        prompt_passphrase("Enter passphrase (empty for no passphrase): ")?;
+    let passphrase = passphrase.map_or_else(
+        || prompt_passphrase("Enter passphrase (empty for no passphrase): "),
+        Ok,
+    )?;
 
     if !passphrase.is_empty() {
         private_key = private_key.encrypt(&mut OsRng, passphrase)?;

@@ -48,4 +48,8 @@ pub struct Args {
     /// output path; if omitted, defaults to OS-specific config dir
     #[argh(option, short = 'o')]
     pub output: Option<PathBuf>,
+
+    /// a passphrase for your generated private key.
+    #[argh(option, short = 'N')] // yup, same as openssh
+    pub passphrase: Option<String>,
 }
