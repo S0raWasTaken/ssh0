@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "libssh0"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "crossterm",
@@ -1903,7 +1903,7 @@ dependencies = [
 
 [[package]]
 name = "ssh0"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "argh",
  "crossterm",
@@ -1919,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "ssh0-daemon"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "argh",
  "dashmap",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "ssh0-keygen"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "argh",
  "dirs",
