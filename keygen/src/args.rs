@@ -16,7 +16,7 @@ impl From<KeypairType> for Algorithm {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub enum KeypairType {
     #[default]
     Ed25519,
@@ -39,7 +39,7 @@ impl FromArgValue for KeypairType {
 }
 
 /// Generates a new authentication key for ssh0.
-#[derive(FromArgs, Debug)]
+#[derive(FromArgs)]
 pub struct Args {
     /// accepted values: rsa, rsa256, rsa512, ed, ed25519
     #[argh(option, short = 't', default = "KeypairType::default()")]
@@ -48,4 +48,8 @@ pub struct Args {
     /// output path; if omitted, defaults to OS-specific config dir
     #[argh(option, short = 'o')]
     pub output: Option<PathBuf>,
+
+    /// a passphrase for your generated private key.
+    #[argh(option, short = 'N')] // yup, same as openssh
+    pub passphrase: Option<String>,
 }

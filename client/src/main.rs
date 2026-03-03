@@ -3,7 +3,7 @@ use crate::{
 };
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use dirs::config_dir;
-use libssh0::{DropGuard, break_if, read_exact, timeout};
+use libssh0::{DropGuard, break_if, prompt_passphrase, read_exact, timeout};
 use ssh_key::{LineEnding, PrivateKey};
 use std::{
     error::Error,
@@ -40,7 +40,7 @@ async fn main() -> Res<()> {
 
     enable_raw_mode()?;
     let guard = DropGuard::new((), |()| {
-        let _ = disable_raw_mode();
+        disable_raw_mode().ok();
     });
 
     let mut stream = connect_tls(&host, port).await?;
@@ -110,7 +110,16 @@ fn load_private_key(key_path: Option<PathBuf>) -> Res<PrivateKey> {
         }
     }
 
-    Ok(PrivateKey::read_openssh_file(&private_key_path)?)
+    let mut private_key = PrivateKey::read_openssh_file(&private_key_path)?;
+
+    if private_key.is_encrypted() {
+        let passphrase = prompt_passphrase("Enter passphrase: ")?;
+        private_key = private_key
+            .decrypt(passphrase)
+            .map_err(|e| format!("Incorrect password ({e})"))?;
+    }
+
+    Ok(private_key)
 }
 
 async fn authenticate(
@@ -153,7 +162,7 @@ async fn handshake(
         return Err("Invalid Handshake".into());
     }
 
-    println!("PRAISE THE CODE!");
+    println!("\x1b[1;31m░█░█░░█░█░█░ PRAISE THE CODE! ░█░█░░█░█░█░\x1b[0m");
     Ok(())
 }
 

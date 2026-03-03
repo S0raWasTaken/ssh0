@@ -1,5 +1,6 @@
 use args::Args;
 use dirs::config_dir;
+use libssh0::prompt_passphrase_twice;
 use ssh_key::{Algorithm, LineEnding, PrivateKey, PublicKey, rand_core::OsRng};
 use std::{
     fs::create_dir_all,
@@ -18,8 +19,7 @@ fn main() -> Res<()> {
 
     let pair = make_key_pair(args.r#type.into())?;
     create_dir_all(&output_path)?;
-    println!("Saving to {}...", output_path.display());
-    save(pair, &output_path)
+    save(pair, &output_path, args.passphrase)
 }
 
 fn make_key_pair(algorithm: Algorithm) -> Res<KeyPair> {
@@ -28,7 +28,11 @@ fn make_key_pair(algorithm: Algorithm) -> Res<KeyPair> {
     Ok((private_key.public_key().clone(), private_key))
 }
 
-fn save((public_key, private_key): KeyPair, output: &Path) -> Res<()> {
+fn save(
+    (public_key, mut private_key): KeyPair,
+    output: &Path,
+    passphrase: Option<String>,
+) -> Res<()> {
     let algorithm = match private_key.algorithm() {
         Algorithm::Ed25519 => "id_ed25519",
         Algorithm::Rsa { .. } => "id_rsa",
@@ -37,6 +41,22 @@ fn save((public_key, private_key): KeyPair, output: &Path) -> Res<()> {
 
     let pub_path = output.join(format!("{algorithm}.pub"));
     let priv_path = output.join(algorithm);
+
+    let passphrase = passphrase.map_or_else(
+        || {
+            prompt_passphrase_twice(
+                "Enter passphrase (empty for no passphrase): ",
+                "Enter same passphrase again: ",
+            )
+        },
+        Ok,
+    )?;
+
+    if !passphrase.is_empty() {
+        private_key = private_key.encrypt(&mut OsRng, passphrase)?;
+    }
+
+    println!("Saving to {}", output.display());
 
     public_key.write_openssh_file(&pub_path)?;
     private_key.write_openssh_file(&priv_path, LineEnding::default())?;

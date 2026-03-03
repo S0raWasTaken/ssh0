@@ -1,18 +1,21 @@
-use std::time::Duration;
-
 mod dropguard;
+mod password;
 pub use chrono;
 pub use dropguard::DropGuard;
+pub use password::{prompt_passphrase, prompt_passphrase_twice};
+
+#[cfg(feature = "tokio")]
 pub use tokio;
 
 /// Wraps a future with a 10-second timeout.
 ///
 /// # Errors
 /// Returns [`tokio::time::error::Elapsed`] if the future does not complete within 10 seconds.
+#[cfg(feature = "tokio")]
 pub async fn timeout<F: IntoFuture>(
     f: F,
 ) -> Result<F::Output, tokio::time::error::Elapsed> {
-    tokio::time::timeout(Duration::from_secs(10), f).await
+    tokio::time::timeout(std::time::Duration::from_secs(10), f).await
 }
 
 /// Logs a timestamped message to stdout or stderr.
@@ -53,6 +56,7 @@ macro_rules! break_if {
 /// ```
 /// let signature = read!(stream, signature_length).await?;
 /// ```
+#[cfg(feature = "tokio")]
 #[macro_export]
 macro_rules! read {
     ($stream:expr, $len:expr) => {{
@@ -72,6 +76,7 @@ macro_rules! read {
 /// ```
 /// let greeting = read_exact!(stream, 6).await?;
 /// ```
+#[cfg(feature = "tokio")]
 #[macro_export]
 macro_rules! read_exact {
     ($stream:expr, $len:expr) => {{

@@ -5,7 +5,11 @@ edition = "2024"
 
 [dependencies]
 chrono = "0.4.44"
-tokio = { version = "1.49.0", features = ["full"] }
+crossterm = "0.29.0"
+tokio = { version = "1.49.0", features = ["full"], optional = true }
+
+[features]
+tokio = ["dep:tokio"]
 
 [lints]
 workspace = true
