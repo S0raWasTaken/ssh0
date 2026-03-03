@@ -4,6 +4,9 @@ pub use chrono;
 pub use dropguard::DropGuard;
 pub use password::{prompt_passphrase, prompt_passphrase_twice};
 
+#[cfg(feature = "tokio")]
+pub use tokio;
+
 /// Wraps a future with a 10-second timeout.
 ///
 /// # Errors
@@ -53,12 +56,14 @@ macro_rules! break_if {
 /// ```
 /// let signature = read!(stream, signature_length).await?;
 /// ```
+#[cfg(feature = "tokio")]
 #[macro_export]
 macro_rules! read {
     ($stream:expr, $len:expr) => {{
         async {
             let mut buf = vec![0u8; $len];
-            tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf).await?;
+            $crate::tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf)
+                .await?;
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(buf)
         }
     }};
@@ -71,12 +76,14 @@ macro_rules! read {
 /// ```
 /// let greeting = read_exact!(stream, 6).await?;
 /// ```
+#[cfg(feature = "tokio")]
 #[macro_export]
 macro_rules! read_exact {
     ($stream:expr, $len:expr) => {{
         async {
             let mut buf = [0u8; $len];
-            tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf).await?;
+            $crate::tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf)
+                .await?;
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(buf)
         }
     }};
