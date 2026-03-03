@@ -41,6 +41,30 @@ pub fn prompt_passphrase(prompt: &str) -> io::Result<String> {
     Ok(passphrase)
 }
 
+/// Prompts the user for a passphrase twice and verifies they match.
+///
+/// If the first passphrase is empty, the confirmation prompt is skipped.
+///
+/// # Errors
+/// Returns an error if the passphrases don't match, if reading terminal
+/// input fails, or if raw mode cannot be enabled.
+pub fn prompt_passphrase_twice(
+    prompt1: &str,
+    prompt2: &str,
+) -> io::Result<String> {
+    let pf1 = prompt_passphrase(prompt1)?;
+
+    if pf1.is_empty() {
+        return Ok(pf1);
+    }
+
+    let pf2 = prompt_passphrase(prompt2)?;
+    if pf1 != pf2 {
+        return Err(io::Error::other("Passphrases don't match"));
+    }
+    Ok(pf1)
+}
+
 fn event_parser(
     event: &Event,
     passphrase: &mut String,

@@ -2,7 +2,7 @@ mod dropguard;
 mod password;
 pub use chrono;
 pub use dropguard::DropGuard;
-pub use password::prompt_passphrase;
+pub use password::{prompt_passphrase, prompt_passphrase_twice};
 
 /// Wraps a future with a 10-second timeout.
 ///

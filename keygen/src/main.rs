@@ -1,6 +1,6 @@
 use args::Args;
 use dirs::config_dir;
-use libssh0::prompt_passphrase;
+use libssh0::prompt_passphrase_twice;
 use ssh_key::{Algorithm, LineEnding, PrivateKey, PublicKey, rand_core::OsRng};
 use std::{
     fs::create_dir_all,
@@ -43,7 +43,12 @@ fn save(
     let priv_path = output.join(algorithm);
 
     let passphrase = passphrase.map_or_else(
-        || prompt_passphrase("Enter passphrase (empty for no passphrase): "),
+        || {
+            prompt_passphrase_twice(
+                "Enter passphrase (empty for no passphrase): ",
+                "Enter same passphrase again: ",
+            )
+        },
         Ok,
     )?;
 
