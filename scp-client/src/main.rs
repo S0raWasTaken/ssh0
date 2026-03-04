@@ -152,7 +152,7 @@ async fn download(
     }
 
     recv_success(&mut stream).await?;
-    println!("Success");
+    println!("Success!");
 
     Ok(())
 }

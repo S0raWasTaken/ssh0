@@ -1,9 +1,9 @@
+use indicatif::{ProgressBar, ProgressStyle};
+use std::{io, path::Path};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
 };
-
-use std::{io, path::Path};
 
 use crate::Stream;
 
@@ -11,11 +11,15 @@ pub const BUFFER_SIZE: usize = 8192;
 pub const BUFFER_SIZE_U64: u64 = BUFFER_SIZE as u64;
 
 pub async fn send_file(stream: &mut Stream, path: &Path) -> io::Result<()> {
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+
     let mut file = File::open(path).await?;
     let file_size = file.metadata().await?.len();
 
     stream.write_all(&file_size.to_be_bytes()).await?;
     stream.flush().await?;
+
+    let pb = make_progress_bar(file_size, file_name);
 
     let mut buffer = [0u8; BUFFER_SIZE];
     loop {
@@ -24,9 +28,11 @@ pub async fn send_file(stream: &mut Stream, path: &Path) -> io::Result<()> {
             break;
         }
         stream.write_all(&buffer[..n]).await?;
+        pb.inc(n as u64);
     }
 
     stream.flush().await?;
+    pb.finish_with_message(format!("{file_name} uploaded"));
     Ok(())
 }
 
@@ -45,14 +51,17 @@ pub async fn receive_file(
             output_path.to_path_buf()
         };
 
-    let mut file = File::create(output_path).await?;
+    let mut file = File::create(&output_path).await?;
     let mut remaining = file_size;
     let mut buffer = [0u8; BUFFER_SIZE];
+
+    let pb = make_progress_bar(file_size, file_name);
 
     while remaining > 0 {
         let to_read = remaining.min(BUFFER_SIZE_U64) as usize;
         let n = stream.read(&mut buffer[..to_read]).await?;
         if n == 0 {
+            pb.abandon();
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "Connection was aborted prematurely",
@@ -60,8 +69,24 @@ pub async fn receive_file(
         }
         file.write_all(&buffer[..n]).await?;
         remaining -= n as u64;
+        pb.inc(n as u64);
     }
 
     file.flush().await?;
+    pb.finish_with_message(format!("{file_name} downloaded"));
     Ok(())
+}
+
+fn make_progress_bar(file_size: u64, file_name: &str) -> ProgressBar {
+    let pb = ProgressBar::new(file_size);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg} [{elapsed_precise}] [{bar:40.red.bold/red.bold}] {bytes}/{total_bytes} ({eta})",
+            )
+            .unwrap()
+            .progress_chars("██░"),
+    );
+    pb.set_message(file_name.to_string());
+    pb
 }

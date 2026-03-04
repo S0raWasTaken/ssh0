@@ -15,6 +15,7 @@ sha2 = "0.10.9"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-rustls = "0.26.4"
 ssh-key = { version = "0.6.7", features = ["rsa", "ed25519", "encryption"] }
+indicatif = "0.18.4"
 
 [lints]
 workspace = true
