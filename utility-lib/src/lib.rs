@@ -66,7 +66,7 @@ macro_rules! read {
             let mut buf = vec![0u8; $len];
             $crate::tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf)
                 .await?;
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(buf)
+            Ok::<_, std::io::Error>(buf)
         }
     }};
 }
@@ -86,7 +86,7 @@ macro_rules! read_exact {
             let mut buf = [0u8; $len];
             $crate::tokio::io::AsyncReadExt::read_exact(&mut $stream, &mut buf)
                 .await?;
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(buf)
+            Ok::<_, std::io::Error>(buf)
         }
     }};
 }
