@@ -1,5 +1,7 @@
+use std::fmt::Display;
+
 #[repr(u8)]
-#[non_exhaustive]
+#[derive(Clone, Copy)]
 pub enum SessionType {
     Shell = 0x00,
     Upload = 0x01,
@@ -8,7 +10,7 @@ pub enum SessionType {
 
 impl SessionType {
     #[must_use]
-    pub fn from_u8(byte: [u8; 1]) -> Option<Self> {
+    pub fn from_byte(byte: [u8; 1]) -> Option<Self> {
         match byte[0] {
             0x00 => Some(Self::Shell),
             0x01 => Some(Self::Upload),
@@ -18,11 +20,40 @@ impl SessionType {
     }
 }
 
+impl Display for SessionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                SessionType::Shell => "Shell",
+                SessionType::Upload => "SCP Upload",
+                SessionType::Download => "SCP Download",
+            }
+        )
+    }
+}
+
 pub const CHALLENGE_SIZE: usize = 256;
 
-pub const SCP_ERROR: [u8; 1] = [0xFF];
-pub const SCP_CONTINUE: [u8; 1] = [0x00];
-pub const SCP_SUCCESS: [u8; 1] = [0x01];
+#[repr(u8)]
+pub enum ScpStatus {
+    Continue = 0x00,
+    Success = 0x01,
+    Error = 0xFF,
+}
+
+impl ScpStatus {
+    #[must_use]
+    pub fn from_byte(byte: [u8; 1]) -> Option<Self> {
+        match byte[0] {
+            0x00 => Some(Self::Continue),
+            0x01 => Some(Self::Success),
+            0xFF => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(feature = "tokio")]
 pub mod handshake {

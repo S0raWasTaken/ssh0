@@ -1,6 +1,6 @@
 use crate::{args::Args, read_stdin::read_stdin};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use libssh0::{DropGuard, break_if, timeout};
+use libssh0::{DropGuard, break_if, common::SessionType, timeout};
 use libssh0_client::{Res, authenticate, connect_tls, load_private_key};
 use std::{
     io::{ErrorKind::UnexpectedEof, Write, stdout},
@@ -29,7 +29,8 @@ async fn main() -> Res<()> {
 
     let mut stream = connect_tls(&host, port).await?;
 
-    timeout(authenticate(&mut stream, private_key)).await??;
+    timeout(authenticate(&mut stream, private_key, SessionType::Shell))
+        .await??;
 
     let (mut tcp_rx, tcp_tx) = tokio::io::split(stream);
     let (stdin_tx, stdin_rx) = channel::<Vec<u8>>(32);

@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use libssh0::log;
+use libssh0::{common::SessionType, log};
 use std::{
     collections::HashSet,
     fmt::Display,
@@ -22,7 +22,7 @@ pub struct SessionInfo {
 
 impl Display for SessionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Session {} on {}", self.id, self.address)
+        write!(f, "session {} on {}", self.id, self.address)
     }
 }
 
@@ -56,6 +56,7 @@ impl SessionRegistry {
         fingerprint: KeyFingerprint,
         weak: Weak<Self>,
         address: SocketAddr,
+        session_type: SessionType,
     ) -> (SessionInfo, SessionGuard) {
         let session = SessionInfo::new(
             self.counter.fetch_add(1, Ordering::Relaxed),
@@ -63,7 +64,7 @@ impl SessionRegistry {
             CancellationToken::new(),
         );
 
-        log!("{session} opened");
+        log!("{session_type} {session} opened");
 
         self.sessions
             .entry(fingerprint.clone())

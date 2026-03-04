@@ -103,8 +103,9 @@ pub fn load_private_key(key_path: Option<PathBuf>) -> Res<PrivateKey> {
 pub async fn authenticate(
     mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     private_key: PrivateKey,
+    session_type: SessionType,
 ) -> Res<()> {
-    handshake_client(stream, SessionType::Shell).await?;
+    handshake_client(stream, session_type).await?;
 
     let challenge = read_exact!(stream, CHALLENGE_SIZE).await?;
 

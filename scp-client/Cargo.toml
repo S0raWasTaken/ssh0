@@ -1,0 +1,20 @@
+[package]
+name = "scp0"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ssh0 = { path = "../ssh-client" }
+libssh0 = {path = "../utility-lib", features = ["tokio"]}
+argh = "0.1.14"
+crossterm = "0.29.0"
+daybreak = { version = "0.1.0", features = ["yaml_enc"] }
+dirs = "6.0.0"
+hex = "0.4.3"
+sha2 = "0.10.9"
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-rustls = "0.26.4"
+ssh-key = { version = "0.6.7", features = ["rsa", "ed25519", "encryption"] }
+
+[lints]
+workspace = true

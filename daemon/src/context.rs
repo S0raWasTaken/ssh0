@@ -4,6 +4,7 @@ use crate::{
     sessions::{KeyFingerprint, SessionGuard, SessionInfo, SessionRegistry},
     watcher::AuthorizedKeys,
 };
+use libssh0::common::SessionType;
 use std::{fmt::Display, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{spawn, sync::Semaphore, time::sleep};
 use tokio_rustls::TlsAcceptor;
@@ -65,11 +66,12 @@ impl Context {
         &self,
         fingerprint: KeyFingerprint,
         address: SocketAddr,
+        session_type: SessionType,
     ) -> Res<(SessionInfo, SessionGuard)> {
         self.recheck_auth(&fingerprint)?;
 
         let weak = Arc::downgrade(&self.sessions);
-        Ok(self.sessions.register(fingerprint, weak, address))
+        Ok(self.sessions.register(fingerprint, weak, address, session_type))
     }
 
     fn recheck_auth(&self, key_fingerprint: &str) -> Res<()> {

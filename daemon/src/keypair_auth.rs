@@ -34,8 +34,11 @@ pub async fn authenticate_and_accept_connection(
     log!("Authorized connection from {address}");
     context.rate_limiter.reset(address.ip());
 
-    let (session, _session_guard) =
-        context.register_session(fingerprint(&public_key), address)?;
+    let (session, _session_guard) = context.register_session(
+        fingerprint(&public_key),
+        address,
+        session_type,
+    )?;
 
     let mut socket = match session_type {
         SessionType::Shell => {
@@ -43,7 +46,6 @@ pub async fn authenticate_and_accept_connection(
         }
         SessionType::Upload => scp::handle_upload(socket).await?,
         SessionType::Download => scp::handle_download(socket).await?,
-        _ => unreachable!(), // Handled directly in handshake fn
     };
 
     socket.shutdown().await?;
@@ -99,7 +101,7 @@ async fn handshake(mut stream: &mut TlsStream<TcpStream>) -> Res<SessionType> {
     stream.write_all(&handshake::PRAISE_THE_CODE).await?;
 
     let Some(session_type) =
-        SessionType::from_u8(read_exact!(stream, 1).await?)
+        SessionType::from_byte(read_exact!(stream, 1).await?)
     else {
         kill_stream(stream, "Invalid session type").await?;
     };
