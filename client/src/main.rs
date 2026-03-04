@@ -5,7 +5,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use dirs::config_dir;
 use libssh0::{
     DropGuard, break_if,
-    common::{SessionType, handshake},
+    common::{SessionType, handshake::handshake_client},
     prompt_passphrase, read_exact, timeout,
 };
 use ssh_key::{LineEnding, PrivateKey};
@@ -130,7 +130,7 @@ async fn authenticate(
     mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     private_key: PrivateKey,
 ) -> Res<()> {
-    handshake(stream).await?;
+    handshake_client(stream, SessionType::Shell).await?;
 
     let challenge = read_exact!(stream, 32).await?;
 
@@ -148,27 +148,6 @@ async fn authenticate(
         return Err("Authentication failed".into());
     }
 
-    Ok(())
-}
-
-async fn handshake(
-    mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
-) -> Res<()> {
-    let keygen = read_exact!(stream, 6).await?;
-    if keygen != handshake::KEYGEN {
-        return Err("Invalid Handshake".into());
-    }
-
-    stream.write_all(&handshake::CHURCH).await?;
-    let response = read_exact!(stream, 16).await?;
-
-    if response != handshake::PRAISE_THE_CODE {
-        return Err("Invalid Handshake".into());
-    }
-
-    println!("\x1b[1;31m░█░█░░█░█░█░ PRAISE THE CODE! ░█░█░░█░█░█░\x1b[0m");
-
-    stream.write_all(&[SessionType::Shell as u8]).await?;
     Ok(())
 }
 
