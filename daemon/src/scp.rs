@@ -55,7 +55,7 @@ async fn send_file(stream: &mut Stream, path: &Path) -> io::Result<()> {
     let mut file = File::open(path).await?;
     let file_size = file.metadata().await?.len();
     step(stream).await?;
-    log!("Client requested {}", path.canonicalize()?.display());
+    log!("Sending file {}", path.canonicalize()?.display());
 
     stream.write_all(&file_size.to_be_bytes()).await?;
     stream.flush().await?;
@@ -86,7 +86,13 @@ async fn receive_file(
             output_path.to_path_buf()
         };
 
-    let mut file = File::create(output_path).await?;
+    let mut file = File::create(&output_path).await?;
+
+    log!(
+        "Receiving file {file_name} to {}",
+        output_path.canonicalize()?.display()
+    );
+
     let mut remaining = file_size;
     let mut buffer = [0u8; BUFFER_SIZE];
 
@@ -143,7 +149,16 @@ async fn get_path(mut stream: &mut Stream) -> Res<PathBuf> {
 
     step(stream).await?;
 
-    Ok(PathBuf::from(path_utf8))
+    expand_tilde(PathBuf::from(path_utf8))
+}
+
+fn expand_tilde(path: PathBuf) -> Res<PathBuf> {
+    if let Ok(stripped) = path.strip_prefix("~") {
+        let home = dirs::home_dir().ok_or("Could not find home directory")?;
+        Ok(home.join(stripped))
+    } else {
+        Ok(path)
+    }
 }
 
 #[inline]
