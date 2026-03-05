@@ -70,7 +70,7 @@ pub fn load_private_key(key_path: Option<PathBuf>) -> Res<PrivateKey> {
         use std::{fs, os::unix::fs::PermissionsExt};
 
         let mode = fs::metadata(&private_key_path)?.permissions().mode();
-        if mode & 0o077 != 0 {
+        if mode & 0o177 != 0 {
             return Err(format!(
                 "Private key {} has too permissive permissions ({:o}), expected at most (600)",
                 private_key_path.display(),
