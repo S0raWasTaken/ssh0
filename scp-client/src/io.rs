@@ -1,12 +1,14 @@
 use indicatif::{ProgressBar, ProgressStyle};
-use libssh0::common::SCP_BUFFER_SIZE;
+use libssh0::{DropGuard, common::SCP_BUFFER_SIZE};
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering::Relaxed},
 };
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
+    runtime::Handle,
 };
 
 use crate::Stream;
@@ -65,6 +67,16 @@ pub async fn receive_file(
         PathBuf::from(s)
     };
 
+    let success = AtomicBool::new(false);
+    let handle = Handle::current();
+    let _part_guard = DropGuard::new((), |()| {
+        if !success.load(Relaxed) {
+            let temp_path_copy = temp_path.clone();
+
+            handle.spawn(tokio::fs::remove_file(temp_path_copy));
+        }
+    });
+
     let mut file = File::create(&temp_path).await?;
     let mut remaining = file_size;
     let mut buffer = [0u8; SCP_BUFFER_SIZE];
@@ -90,6 +102,8 @@ pub async fn receive_file(
 
     drop(file);
     tokio::fs::rename(&temp_path, output_path).await?;
+
+    success.store(true, Relaxed);
 
     pb.finish_with_message(format!("{file_name} downloaded"));
     Ok(())

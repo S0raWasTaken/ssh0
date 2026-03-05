@@ -1,15 +1,18 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering::Relaxed},
 };
 
 use libssh0::{
+    DropGuard,
     common::{SCP_BUFFER_SIZE, ScpStatus},
     log, read, read_exact,
 };
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
+    runtime::Handle,
 };
 
 use crate::{Res, Stream, sessions::SessionInfo};
@@ -117,6 +120,16 @@ async fn receive_file(
         PathBuf::from(s)
     };
 
+    let success = AtomicBool::new(false);
+    let handle = Handle::current();
+    let _part_guard = DropGuard::new((), |()| {
+        if !success.load(Relaxed) {
+            let temp_path_copy = temp_path.clone();
+
+            handle.spawn(tokio::fs::remove_file(temp_path_copy));
+        }
+    });
+
     let mut file = File::create(&temp_path).await?;
 
     let log_output =
@@ -148,6 +161,7 @@ async fn receive_file(
     drop(file);
     tokio::fs::rename(&temp_path, output_path).await?;
 
+    success.store(true, Relaxed);
     log!(
         "{session} finished uploading {file_name} to {}",
         log_output.display()
