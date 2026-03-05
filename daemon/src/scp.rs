@@ -66,10 +66,11 @@ async fn send_file(
 ) -> io::Result<()> {
     let mut file = File::open(path).await?;
     let file_size = file.metadata().await?.len();
-    step(stream).await?;
 
     let log_path = path.canonicalize()?;
     log!("{session} requested file {}", log_path.display());
+
+    step(stream).await?;
 
     stream.write_all(&file_size.to_be_bytes()).await?;
     stream.flush().await?;
