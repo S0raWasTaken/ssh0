@@ -1,6 +1,6 @@
 use std::{
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering::Relaxed},
 };
 
@@ -184,6 +184,13 @@ async fn get_filename(mut stream: &mut Stream) -> Res<String> {
     else {
         write_error_and_kill(stream, "File name must be valid UTF-8").await?;
     };
+
+    let path = Path::new(&filename);
+    if path.components().count() != 1
+        || !matches!(path.components().next(), Some(Component::Normal(_)))
+    {
+        write_error_and_kill(stream, "Invalid file name").await?;
+    }
 
     step(stream).await?;
 
