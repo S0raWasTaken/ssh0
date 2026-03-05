@@ -28,7 +28,7 @@ Append your generated public key to the daemon user's `authorized_keys` file.
 Example:
 ```bash
 mkdir -p ~/.config/ssh0-daemon
-cat ~/.config/ssh0-daemon/id_ed25519.pub >> ~/.config/ssh0-daemon/authorized_keys
+cat ~/.config/ssh0/id_ed25519.pub >> ~/.config/ssh0-daemon/authorized_keys
 chmod 600 ~/.config/ssh0-daemon/authorized_keys
 ```
  
