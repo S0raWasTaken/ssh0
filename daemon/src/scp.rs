@@ -75,13 +75,20 @@ async fn send_file(
     stream.write_all(&file_size.to_be_bytes()).await?;
     stream.flush().await?;
 
+    let mut remaining = file_size;
     let mut buffer = [0u8; SCP_BUFFER_SIZE];
-    loop {
-        let n = file.read(&mut buffer).await?;
+    while remaining > 0 {
+        #[expect(clippy::cast_possible_truncation)]
+        let to_read = remaining.min(SCP_BUFFER_SIZE as u64) as usize;
+        let n = file.read(&mut buffer[..to_read]).await?;
         if n == 0 {
-            break;
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Source file changed during download",
+            ));
         }
         stream.write_all(&buffer[..n]).await?;
+        remaining -= n as u64;
     }
 
     stream.flush().await?;
