@@ -6,12 +6,11 @@ A custom SSH-like protocol in Rust. TLS transport, keypair auth, PTY-backed remo
 > It does not perform path restriction or chroot isolation; authenticated
 > clients have the same filesystem access as the user running the daemon.
 > **Do not run the daemon as root.**
-
-> By the way, this is a personal project. It technically features a stricter
-> security standard than OpenSSH, but it lacks the years and years of pentesting
-> that OpenSSH did get, so I wouldn't trust this on something that requires
-> a ton of security. I wouldn't trust just OpenSSH to do the job! 
-
+>
+> By the way, this is a personal project. I wouldn't trust this on something 
+> that requires a ton of security. I wouldn't trust just OpenSSH to do the job
+> in that scenario! 
+>
 > At least run this (or even OpenSSH) under a virtual private network, like Tailscale. Your log files will thank you :)
 
 ## Setup
@@ -24,6 +23,15 @@ Saves to `~/.config/ssh0/` by default.
 
 **2. Authorize your public key on the server**
 
+Append your generated public key to the daemon user's `authorized_keys` file.
+
+Example:
+```bash
+mkdir -p ~/.config/ssh0
+cat ~/.config/ssh0/id_ed25519.pub >> ~/.config/ssh0/authorized_keys
+chmod 600 ~/.config/ssh0/authorized_keys
+```
+ 
 **3. Start the daemon**
 ```bash
 ssh0-daemon              # binds to 127.0.0.1:2121
