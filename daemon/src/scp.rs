@@ -111,7 +111,11 @@ async fn receive_file(
 
     let mut file = File::create(&temp_path).await?;
 
-    let log_output = output_path.canonicalize()?;
+    let log_output =
+        output_path.parent().and_then(|p| p.canonicalize().ok()).map_or_else(
+            || output_path.clone(),
+            |p| p.join(output_path.file_name().unwrap_or_default()),
+        );
     log!("{session} is uploading {file_name} to {}", log_output.display());
 
     let mut remaining = file_size;
