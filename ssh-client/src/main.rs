@@ -75,7 +75,12 @@ async fn resize_watcher(resize_tx: Sender<ClientEvent>) {
             && (columns, rows) != last_size
         {
             last_size = (columns, rows);
-            resize_tx.send(ClientEvent::Resize(columns, rows)).await.ok();
+            break_if!(
+                resize_tx
+                    .send(ClientEvent::Resize(columns, rows))
+                    .await
+                    .is_err()
+            );
         }
     }
 }
