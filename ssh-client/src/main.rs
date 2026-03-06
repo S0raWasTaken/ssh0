@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
-    spawn,
+    select, spawn,
     sync::mpsc::{Receiver, Sender, channel},
     task::spawn_blocking,
 };
@@ -70,7 +70,10 @@ const DEFAULT_SIZE: (u16, u16) = (80, 24);
 async fn resize_watcher(resize_tx: Sender<ClientEvent>) {
     let mut last_size = crossterm::terminal::size().unwrap_or(DEFAULT_SIZE);
     loop {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        select! {
+            () = resize_tx.closed() => break,
+            () = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
         if let Ok((columns, rows)) = crossterm::terminal::size()
             && (columns, rows) != last_size
         {
