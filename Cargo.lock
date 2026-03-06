@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "libssh0"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "crossterm",
@@ -1697,7 +1697,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scp0"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "argh",
  "crossterm",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "ssh0"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "argh",
  "crossterm",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "ssh0-daemon"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "argh",
  "dashmap",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "ssh0-keygen"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "argh",
  "dirs",

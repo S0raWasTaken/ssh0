@@ -1,8 +1,9 @@
+use crate::ClientEvent;
 use libssh0::break_if;
 use tokio::sync::mpsc::Sender;
 
 #[cfg(not(windows))]
-pub fn read_stdin(tx: &Sender<Vec<u8>>) {
+pub fn read_stdin(tx: &Sender<ClientEvent>) {
     use std::io::{Read, stdin};
 
     let mut buf = [0u8; 1024];
@@ -10,14 +11,17 @@ pub fn read_stdin(tx: &Sender<Vec<u8>>) {
         match stdin().read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                break_if!(tx.blocking_send(buf[..n].to_vec()).is_err());
+                break_if!(
+                    tx.blocking_send(ClientEvent::Input(buf[..n].to_vec()))
+                        .is_err()
+                );
             }
         }
     }
 }
 
 #[cfg(windows)]
-pub fn read_stdin(tx: &Sender<Vec<u8>>) {
+pub fn read_stdin(tx: &Sender<ClientEvent>) {
     loop {
         use crossterm::event::{self, Event, KeyCode, KeyEvent};
 
@@ -45,7 +49,7 @@ pub fn read_stdin(tx: &Sender<Vec<u8>>) {
                     KeyCode::PageDown => vec![b'\x1b', b'[', b'6', b'~'],
                     _ => continue,
                 };
-                break_if!(tx.blocking_send(bytes).is_err());
+                break_if!(tx.blocking_send(ClientEvent::Input(bytes)).is_err());
             }
             Err(_) => break,
             _ => (),

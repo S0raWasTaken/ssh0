@@ -35,8 +35,24 @@ impl Display for SessionType {
 }
 
 pub const CHALLENGE_SIZE: usize = 256;
-
 pub const SCP_BUFFER_SIZE: usize = 8192;
+
+#[repr(u8)]
+pub enum SshMessage {
+    Input = 0x00,
+    Resize = 0x01,
+}
+
+impl SshMessage {
+    #[must_use]
+    pub fn from_byte(byte: [u8; 1]) -> Option<Self> {
+        match byte[0] {
+            0x00 => Some(Self::Input),
+            0x01 => Some(Self::Resize),
+            _ => None,
+        }
+    }
+}
 
 #[repr(u8)]
 pub enum ScpStatus {
