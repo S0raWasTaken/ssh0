@@ -54,5 +54,4 @@ On first connection you'll be asked to verify the server's TLS fingerprint.
 
 ## Known Limitations
 
-- No terminal resize support (next update)
-- No port forwarding
+- No port forwarding (Not planned)
