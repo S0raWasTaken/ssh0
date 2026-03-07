@@ -6,7 +6,7 @@ mod session;
 use std::{ffi::OsStr, path::Path};
 
 use libssh0::{
-    common::{ScpStatus, SessionType},
+    common::{ScpMessage, ScpStatus, SessionType},
     read, read_exact, timeout,
 };
 use libssh0_client::{Res, authenticate, connect_tls, load_private_key};
@@ -109,6 +109,8 @@ async fn upload(
 
     recv_success(&mut stream).await?;
     println!("Success!");
+
+    done(&mut stream).await?;
     Ok(())
 }
 
@@ -154,6 +156,7 @@ async fn download(
     recv_success(&mut stream).await?;
     println!("Success!");
 
+    done(&mut stream).await?;
     Ok(())
 }
 
@@ -187,4 +190,15 @@ async fn read_error(mut stream: &mut Stream) -> Res<!> {
 
     eprint!("Remote "); // Will show up as 'Remote Error: etc'
     Err(String::from_utf8(error)?.into())
+}
+
+#[inline]
+async fn done(stream: &mut Stream) -> std::io::Result<()> {
+    stream.write_all(&ScpMessage::Done.to_byte()).await
+}
+
+#[expect(dead_code, reason = "WIP")]
+#[inline]
+async fn next_file(stream: &mut Stream) -> std::io::Result<()> {
+    stream.write_all(&ScpMessage::NextFile.to_byte()).await
 }

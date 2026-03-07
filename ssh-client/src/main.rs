@@ -104,7 +104,7 @@ async fn forward_to_server<S: AsyncWrite>(
     while let Some(event) = rx.recv().await {
         break_if!(match event {
             ClientEvent::Input(data) => {
-                tcp_tx.write_all(&[SshMessage::Input as u8]).await.is_err()
+                tcp_tx.write_all(&SshMessage::Input.to_byte()).await.is_err()
                     || tcp_tx
                         .write_all(&(data.len() as u32).to_be_bytes())
                         .await
@@ -112,7 +112,7 @@ async fn forward_to_server<S: AsyncWrite>(
                     || tcp_tx.write_all(&data).await.is_err()
             }
             ClientEvent::Resize(columns, rows) => {
-                tcp_tx.write_all(&[SshMessage::Resize as u8]).await.is_err()
+                tcp_tx.write_all(&SshMessage::Resize.to_byte()).await.is_err()
                     || tcp_tx.write_all(&columns.to_be_bytes()).await.is_err()
                     || tcp_tx.write_all(&rows.to_be_bytes()).await.is_err()
             }

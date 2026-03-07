@@ -1,12 +1,14 @@
 use std::{
-    io,
+    fmt::Display,
+    io::{self, ErrorKind},
+    ops::ControlFlow,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering::Relaxed},
 };
 
 use libssh0::{
-    DropGuard,
-    common::{SCP_BUFFER_SIZE, ScpStatus},
+    DropGuard, break_if,
+    common::{SCP_BUFFER_SIZE, ScpMessage, ScpStatus},
     log, read, read_exact,
 };
 use tokio::{
@@ -15,26 +17,36 @@ use tokio::{
     runtime::Handle,
 };
 
-use crate::{Res, Stream, sessions::SessionInfo};
+use crate::{Res, Stream, print_err, sessions::SessionInfo};
 
 // Server <- Client
 pub async fn handle_upload(
     mut stream: Stream,
     session: SessionInfo,
 ) -> Res<Stream> {
-    let output_path = get_path(&mut stream).await?;
-    let file_name = get_filename(&mut stream).await?;
-    let file_size = u64::from_be_bytes(read_exact!(stream, 8).await?);
+    loop {
+        let output_path = get_path(&mut stream).await?;
+        let file_name = get_filename(&mut stream).await?;
+        let file_size = u64::from_be_bytes(read_exact!(stream, 8).await?);
 
-    // No limit to file size :) have fun!
-    if let Err(error) =
-        receive_file(&mut stream, &output_path, &file_name, file_size, session)
-            .await
-    {
-        write_error_and_kill(&mut stream, &error.to_string()).await?;
+        // No limit to file size :) have fun!
+        if let Err(error) = receive_file(
+            &mut stream,
+            &output_path,
+            &file_name,
+            file_size,
+            &session,
+        )
+        .await
+        {
+            write_error_and_kill(&mut stream, &error.to_string()).await?;
+        }
+
+        success(&mut stream).await?;
+
+        break_if!(next_operation(&mut stream).await.is_break());
     }
 
-    success(&mut stream).await?;
     Ok(stream)
 }
 
@@ -43,21 +55,25 @@ pub async fn handle_download(
     mut stream: Stream,
     session: SessionInfo,
 ) -> Res<Stream> {
-    let path = get_path(&mut stream).await?;
+    loop {
+        let path = get_path(&mut stream).await?;
 
-    if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
-        write_error_and_kill(
-            &mut stream,
-            &io::ErrorKind::IsADirectory.to_string(),
-        )
-        .await?;
+        if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
+            write_error_and_kill(
+                &mut stream,
+                &io::ErrorKind::IsADirectory.to_string(),
+            )
+            .await?;
+        }
+
+        if let Err(error) = send_file(&mut stream, &path, &session).await {
+            write_error_and_kill(&mut stream, &error.to_string()).await?;
+        }
+
+        success(&mut stream).await?;
+
+        break_if!(next_operation(&mut stream).await.is_break());
     }
-
-    if let Err(error) = send_file(&mut stream, &path, session).await {
-        write_error_and_kill(&mut stream, &error.to_string()).await?;
-    }
-
-    success(&mut stream).await?;
 
     Ok(stream)
 }
@@ -65,13 +81,13 @@ pub async fn handle_download(
 async fn send_file(
     stream: &mut Stream,
     path: &Path,
-    session: SessionInfo,
+    session_info: &impl Display,
 ) -> io::Result<()> {
     let mut file = File::open(path).await?;
     let file_size = file.metadata().await?.len();
 
     let log_path = path.canonicalize()?;
-    log!("{session} requested file {}", log_path.display());
+    log!("{session_info} requested file {}", log_path.display());
 
     step(stream).await?;
 
@@ -95,7 +111,7 @@ async fn send_file(
     }
 
     stream.flush().await?;
-    log!("{session} successfully downloaded file {}", log_path.display());
+    log!("{session_info} successfully downloaded file {}", log_path.display());
 
     Ok(())
 }
@@ -105,7 +121,7 @@ async fn receive_file(
     output_path: &Path,
     file_name: &str,
     file_size: u64,
-    session: SessionInfo,
+    session: &impl Display,
 ) -> io::Result<()> {
     let output_path =
         if tokio::fs::metadata(output_path).await.is_ok_and(|m| m.is_dir()) {
@@ -227,20 +243,46 @@ fn expand_tilde(path: PathBuf) -> Res<PathBuf> {
 
 #[inline]
 async fn step(stream: &mut Stream) -> io::Result<()> {
-    stream.write_all(&[ScpStatus::Continue as u8]).await?;
+    stream.write_all(&ScpStatus::Continue.to_byte()).await?;
     stream.flush().await
 }
 
 #[inline]
 async fn success(stream: &mut Stream) -> io::Result<()> {
-    stream.write_all(&[ScpStatus::Success as u8]).await?;
+    stream.write_all(&ScpStatus::Success.to_byte()).await?;
     stream.flush().await
+}
+
+macro_rules! ok_or_else {
+    ($x:expr, $y:expr) => {
+        match $x {
+            Ok(ok) => ok,
+            Err(err) => {
+                print_err(&err);
+                return $y;
+            }
+        }
+    };
+}
+
+async fn next_operation(mut stream: &mut Stream) -> ControlFlow<()> {
+    let message = ok_or_else! {
+        read_exact!(stream, 1).await.and_then(|byte| {
+            ScpMessage::from_byte(byte).ok_or(ErrorKind::InvalidInput.into())
+        }),
+        ControlFlow::Break(())
+    };
+
+    match message {
+        ScpMessage::NextFile => ControlFlow::Continue(()),
+        ScpMessage::Done => ControlFlow::Break(()),
+    }
 }
 
 // "we had an error" > "error length" > "error" > "flush" > "shutdown stream"
 async fn write_error_and_kill(stream: &mut Stream, error: &str) -> Res<!> {
     log!(e "Writing error to client");
-    stream.write_all(&[ScpStatus::Error as u8]).await?;
+    stream.write_all(&ScpStatus::Error.to_byte()).await?;
     stream.write_all(&u32::try_from(error.len())?.to_be_bytes()).await?;
     stream.write_all(error.as_bytes()).await?;
 
