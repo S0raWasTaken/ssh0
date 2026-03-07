@@ -1,64 +1,91 @@
 #![feature(never_type)]
 mod args;
 mod io;
-mod session;
 
 use std::{ffi::OsStr, path::Path};
 
+use indicatif::MultiProgress;
 use libssh0::{
     common::{ScpStatus, SessionType},
     read, read_exact, timeout,
 };
-use libssh0_client::{Res, authenticate, connect_tls, load_private_key};
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use libssh0_client::{
+    BoxedError, Res, authenticate, connect_tls, load_private_key,
+};
+use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinSet};
 use tokio_rustls::client::TlsStream;
 
 use crate::{
-    args::{Args, parse_args},
+    args::{Args, FileInfo},
     io::{receive_file, send_file},
-    session::Session,
 };
 
 type Stream = TlsStream<TcpStream>;
 
-#[tokio::main(worker_threads = 1)]
+#[tokio::main]
 async fn main() -> Res<()> {
-    let Args { source, destination, port, key_path } = parse_args()?;
-    let Session {
-        session_type,
-        host,
-        source_path,
-        destination_path,
-        file_name,
-    } = session::define_session_type(source, destination)?;
+    let Args { session_type, source_files, destination, key_path, host, port } =
+        Args::from_argh()?;
 
     let private_key = load_private_key(key_path)?;
 
-    let mut stream = connect_tls(&host, port).await?;
+    let multi_progress_bar = MultiProgress::new();
 
-    timeout(authenticate(&mut stream, private_key, session_type)).await??;
+    let mut task_set = JoinSet::new();
 
-    match session_type {
-        SessionType::Upload => {
-            upload(
-                stream,
-                &source_path,
-                destination_path.as_os_str(),
-                &file_name,
-            )
-            .await
-        }
-        SessionType::Download => {
-            download(
-                stream,
-                source_path.as_os_str(),
-                &destination_path,
-                &file_name,
-            )
-            .await
-        }
-        SessionType::Shell => unreachable!(),
+    let mut print_banner = true;
+
+    for FileInfo { path: file_path, name: file_name } in source_files {
+        let private_key = private_key.clone();
+        let multi_progress = multi_progress_bar.clone();
+        let host = host.clone();
+        let destination = destination.clone();
+
+        #[expect(clippy::excessive_nesting)]
+        task_set.spawn(async move {
+            let mut stream = connect_tls(&host, port).await?;
+            timeout(authenticate(
+                &mut stream,
+                private_key,
+                session_type,
+                print_banner,
+            ))
+            .await??;
+
+            match session_type {
+                SessionType::Upload => {
+                    upload(
+                        stream,
+                        &file_path,
+                        destination.as_os_str(),
+                        &file_name,
+                        multi_progress,
+                    )
+                    .await?;
+                }
+                SessionType::Download => {
+                    download(
+                        stream,
+                        file_path.as_os_str(),
+                        &destination,
+                        &file_name,
+                        multi_progress,
+                    )
+                    .await?;
+                }
+                SessionType::Shell => unreachable!(),
+            }
+            Ok::<(), BoxedError>(())
+        });
+        print_banner = false;
     }
+    multi_progress_bar.set_move_cursor(true);
+
+    while let Some(result) = task_set.join_next().await {
+        result??;
+    }
+
+    Ok(())
 }
 
 // Client -> Server
@@ -79,6 +106,7 @@ async fn upload(
     source: &Path,
     remote_output: &OsStr,
     file_name: &str,
+    multi_progress_bar: MultiProgress,
 ) -> Res<()> {
     // send [remote output_path size]
     let remote_output_path_size =
@@ -102,13 +130,13 @@ async fn upload(
     stream.write_all(file_name.as_bytes()).await?;
     recv_ok(&mut stream).await?;
 
-    if let Err(error) = send_file(&mut stream, source).await {
+    if let Err(error) = send_file(&mut stream, source, multi_progress_bar).await
+    {
         eprintln!("Local error: {error}");
         read_error(&mut stream).await?;
     }
 
     recv_success(&mut stream).await?;
-    println!("Success!");
     Ok(())
 }
 
@@ -127,6 +155,7 @@ async fn download(
     remote_source: &OsStr,
     destination: &Path,
     file_name: &str,
+    multi_progress_bar: MultiProgress,
 ) -> Res<()> {
     // send [remote file_path size]
     let remote_file_path_size =
@@ -143,17 +172,20 @@ async fn download(
     // recv [remote file size]
     let remote_file_size = u64::from_be_bytes(read_exact!(stream, 8).await?);
 
-    if let Err(error) =
-        receive_file(&mut stream, destination, file_name, remote_file_size)
-            .await
+    if let Err(error) = receive_file(
+        &mut stream,
+        destination,
+        file_name,
+        remote_file_size,
+        multi_progress_bar,
+    )
+    .await
     {
         eprintln!("Local error: {error}");
         read_error(&mut stream).await?;
     }
 
     recv_success(&mut stream).await?;
-    println!("Success!");
-
     Ok(())
 }
 

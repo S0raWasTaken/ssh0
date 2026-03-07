@@ -97,9 +97,10 @@ impl SessionRegistry {
     }
 
     fn unregister(&self, fingerprint: &str, id: usize) {
-        if let Some(mut tokens) = self.sessions.get_mut(fingerprint) {
-            tokens.retain(|info| info.id != id);
-        }
+        self.sessions.remove_if_mut(fingerprint, |_, sessions| {
+            sessions.retain(|info| info.id != id);
+            sessions.is_empty()
+        });
     }
 }
 

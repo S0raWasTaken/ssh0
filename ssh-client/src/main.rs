@@ -34,7 +34,7 @@ async fn main() -> Res<()> {
 
     let mut stream = connect_tls(&host, port).await?;
 
-    timeout(authenticate(&mut stream, private_key, SessionType::Shell))
+    timeout(authenticate(&mut stream, private_key, SessionType::Shell, true))
         .await??;
 
     let (mut tcp_rx, tcp_tx) = tokio::io::split(stream);

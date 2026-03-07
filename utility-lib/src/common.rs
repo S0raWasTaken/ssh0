@@ -67,6 +67,7 @@ pub mod handshake {
     pub async fn handshake_client(
         mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
         session_type: SessionType,
+        print_banner: bool,
     ) -> io::Result<()> {
         let invalid_handshake = Error::new(InvalidData, "Invalid Handshake");
 
@@ -82,9 +83,13 @@ pub mod handshake {
             return Err(invalid_handshake);
         }
 
-        println!();
-        println!("\x1b[1;31m░█░█░░█░█░█░ PRAISE THE CODE! ░█░█░░█░█░█░\x1b[0m");
-        println!();
+        if print_banner {
+            println!();
+            println!(
+                "\x1b[1;31m░█░█░░█░█░█░ PRAISE THE CODE! ░█░█░░█░█░█░\x1b[0m"
+            );
+            println!();
+        }
 
         stream.write_all(&session_type.to_byte()).await?;
         Ok(())

@@ -156,7 +156,7 @@ async fn receive_file(
         remaining -= n as u64;
     }
 
-    file.flush().await?;
+    file.sync_all().await?;
 
     drop(file);
     tokio::fs::rename(&temp_path, output_path).await?;

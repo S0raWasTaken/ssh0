@@ -104,8 +104,9 @@ pub async fn authenticate(
     mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     private_key: PrivateKey,
     session_type: SessionType,
+    print_banner: bool,
 ) -> Res<()> {
-    handshake_client(stream, session_type).await?;
+    handshake_client(stream, session_type, print_banner).await?;
 
     let challenge = read_exact!(stream, CHALLENGE_SIZE).await?;
 
