@@ -1,11 +1,11 @@
 use crate::{args::Args, read_stdin::read_stdin};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use libssh0::{
-    DropGuard, break_if,
+    DropGuard, Res, break_if,
     common::{SessionType, SshMessage},
     timeout,
 };
-use libssh0_client::{Res, authenticate, connect_tls, load_private_key};
+use libssh0_client::{authenticate, connect_tls, load_private_key};
 use std::{
     io::{ErrorKind::UnexpectedEof, Write, stdout},
     process::exit,

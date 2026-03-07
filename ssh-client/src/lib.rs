@@ -1,5 +1,6 @@
 use dirs::config_dir;
 use libssh0::{
+    BoxedError, Res,
     common::{CHALLENGE_SIZE, SessionType, handshake::handshake_client},
     prompt_passphrase, read_exact, timeout,
 };
@@ -15,11 +16,8 @@ use tokio_rustls::{
 };
 
 use crate::fingerprint::FingerprintCheck;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::{error::Error, path::PathBuf};
-
-pub type BoxedError = Box<dyn Error + Send + Sync>;
-pub type Res<T> = Result<T, BoxedError>;
 
 mod fingerprint;
 

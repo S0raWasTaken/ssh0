@@ -1,6 +1,6 @@
-use super::Res;
-use crate::{BoxedError, context::Context, fingerprint, scp, ssh};
+use crate::{context::Context, fingerprint, scp, ssh};
 use libssh0::{
+    BoxedError, Res,
     common::{CHALLENGE_SIZE, SessionType, handshake},
     log, read, read_exact, timeout,
 };

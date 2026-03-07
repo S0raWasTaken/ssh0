@@ -2,9 +2,14 @@ pub mod common;
 mod dropguard;
 mod password;
 
+use std::error::Error;
+
 pub use chrono;
 pub use dropguard::DropGuard;
 pub use password::{prompt_passphrase, prompt_passphrase_twice};
+
+pub type BoxedError = Box<dyn Error + Send + Sync>;
+pub type Res<T> = Result<T, BoxedError>;
 
 #[cfg(feature = "tokio")]
 pub use tokio;

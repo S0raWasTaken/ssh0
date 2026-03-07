@@ -1,6 +1,5 @@
 use argh::{FromArgValue, FromArgs};
-use libssh0::common::SessionType;
-use libssh0_client::Res;
+use libssh0::{Res, common::SessionType};
 use std::{
     io::{
         self,

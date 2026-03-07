@@ -8,7 +8,7 @@ use crate::{
     tls::make_acceptor,
     watcher::watch_authorized_keys,
 };
-use libssh0::log;
+use libssh0::{Res, log};
 use ssh_key::PublicKey;
 use std::{fmt::Display, fs::create_dir_all, sync::Arc, time::Duration};
 use tokio::{
@@ -19,8 +19,6 @@ use tokio::{
 };
 use tokio_rustls::server::TlsStream;
 
-pub type BoxedError = Box<dyn std::error::Error + Send + Sync>;
-pub type Res<T> = Result<T, BoxedError>;
 pub type Stream = TlsStream<TcpStream>;
 
 mod args;

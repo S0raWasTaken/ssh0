@@ -1,26 +1,30 @@
 #![feature(never_type)]
 mod args;
 mod io;
+mod network;
 
-use std::{ffi::OsStr, path::Path};
+use std::path::PathBuf;
 
 use indicatif::MultiProgress;
-use libssh0::{
-    common::{ScpStatus, SessionType},
-    read, read_exact, timeout,
-};
-use libssh0_client::{
-    BoxedError, Res, authenticate, connect_tls, load_private_key,
-};
-use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinSet};
+use libssh0::{BoxedError, Res, common::SessionType, timeout};
+use libssh0_client::{authenticate, connect_tls, load_private_key};
+use ssh_key::PrivateKey;
+use tokio::{net::TcpStream, task::JoinSet};
 use tokio_rustls::client::TlsStream;
 
-use crate::{
-    args::{Args, FileInfo},
-    io::{receive_file, send_file},
-};
+use crate::args::Args;
 
-type Stream = TlsStream<TcpStream>;
+pub type Stream = TlsStream<TcpStream>;
+
+struct Session {
+    pub host: String,
+    pub port: u16,
+    pub source_path: PathBuf,
+    pub source_name: String,
+    pub destination: PathBuf,
+    pub private_key: PrivateKey,
+    pub kind: SessionType,
+}
 
 #[tokio::main]
 async fn main() -> Res<()> {
@@ -35,50 +39,27 @@ async fn main() -> Res<()> {
 
     let mut print_banner = true;
 
-    for FileInfo { path: file_path, name: file_name } in source_files {
-        let private_key = private_key.clone();
+    for source in source_files {
         let multi_progress = multi_progress_bar.clone();
-        let host = host.clone();
-        let destination = destination.clone();
 
-        #[expect(clippy::excessive_nesting)]
-        task_set.spawn(async move {
-            let mut stream = connect_tls(&host, port).await?;
-            timeout(authenticate(
-                &mut stream,
-                private_key,
-                session_type,
-                print_banner,
-            ))
-            .await??;
+        let session = Session {
+            host: host.clone(),
+            port,
+            source_path: source.path,
+            source_name: source.name,
+            destination: destination.clone(),
+            private_key: private_key.clone(),
+            kind: session_type,
+        };
 
-            match session_type {
-                SessionType::Upload => {
-                    upload(
-                        stream,
-                        &file_path,
-                        destination.as_os_str(),
-                        &file_name,
-                        multi_progress,
-                    )
-                    .await?;
-                }
-                SessionType::Download => {
-                    download(
-                        stream,
-                        file_path.as_os_str(),
-                        &destination,
-                        &file_name,
-                        multi_progress,
-                    )
-                    .await?;
-                }
-                SessionType::Shell => unreachable!(),
-            }
-            Ok::<(), BoxedError>(())
-        });
+        task_set.spawn(file_transfer_session(
+            session,
+            multi_progress,
+            print_banner,
+        ));
         print_banner = false;
     }
+
     multi_progress_bar.set_move_cursor(true);
 
     while let Some(result) = task_set.join_next().await {
@@ -88,135 +69,42 @@ async fn main() -> Res<()> {
     Ok(())
 }
 
-// Client -> Server
-//
-// send [remote output_path size]
-// recv     [ok]
-// send [remote output_path bytes]
-// recv     [ok]
-// send [local file_name size]
-// recv     [ok]
-// send [local file_name bytes]
-// recv     [ok]
-// send [local file size]    (uncapped, so no ok expected)
-// send [local file bytes]
-// recv   [success]
-async fn upload(
-    mut stream: Stream,
-    source: &Path,
-    remote_output: &OsStr,
-    file_name: &str,
+async fn file_transfer_session(
+    session: Session,
     multi_progress_bar: MultiProgress,
+    print_banner: bool,
 ) -> Res<()> {
-    // send [remote output_path size]
-    let remote_output_path_size =
-        u32::to_be_bytes(u32::try_from(remote_output.len())?);
-
-    stream.write_all(&remote_output_path_size).await?;
-    recv_ok(&mut stream).await?;
-
-    // send [remote output_path bytes]
-    stream.write_all(remote_output.as_encoded_bytes()).await?;
-    recv_ok(&mut stream).await?;
-
-    // send [local file_name size]
-    let local_file_name_size =
-        u32::to_be_bytes(u32::try_from(file_name.len())?);
-
-    stream.write_all(&local_file_name_size).await?;
-    recv_ok(&mut stream).await?;
-
-    // send [local file_name bytes]
-    stream.write_all(file_name.as_bytes()).await?;
-    recv_ok(&mut stream).await?;
-
-    if let Err(error) = send_file(&mut stream, source, multi_progress_bar).await
-    {
-        eprintln!("Local error: {error}");
-        read_error(&mut stream).await?;
-    }
-
-    recv_success(&mut stream).await?;
-    Ok(())
-}
-
-// Server -> Client
-//
-// send [remote file_path size]
-// recv     [ok]
-// send [remote file_path bytes]
-// recv     [ok] (path is valid UTF-8)
-// recv     [ok] (path exists)
-// recv [remote file size]
-// recv [remote file bytes]
-// recv   [success]
-async fn download(
-    mut stream: Stream,
-    remote_source: &OsStr,
-    destination: &Path,
-    file_name: &str,
-    multi_progress_bar: MultiProgress,
-) -> Res<()> {
-    // send [remote file_path size]
-    let remote_file_path_size =
-        u32::to_be_bytes(u32::try_from(remote_source.len())?);
-
-    stream.write_all(&remote_file_path_size).await?;
-    recv_ok(&mut stream).await?;
-
-    // send [remote file_path bytes]
-    stream.write_all(remote_source.as_encoded_bytes()).await?;
-    recv_ok(&mut stream).await?;
-    recv_ok(&mut stream).await?;
-
-    // recv [remote file size]
-    let remote_file_size = u64::from_be_bytes(read_exact!(stream, 8).await?);
-
-    if let Err(error) = receive_file(
+    let mut stream = connect_tls(&session.host, session.port).await?;
+    timeout(authenticate(
         &mut stream,
-        destination,
-        file_name,
-        remote_file_size,
-        multi_progress_bar,
-    )
-    .await
-    {
-        eprintln!("Local error: {error}");
-        read_error(&mut stream).await?;
-    }
+        session.private_key,
+        session.kind,
+        print_banner,
+    ))
+    .await??;
 
-    recv_success(&mut stream).await?;
-    Ok(())
-}
-
-async fn recv_ok(mut stream: &mut Stream) -> Res<()> {
-    match ScpStatus::from_byte(read_exact!(stream, 1).await?)
-        .ok_or("Invalid status received")?
-    {
-        ScpStatus::Continue => Ok(()),
-        ScpStatus::Success => {
-            Err("Success received, but it was unexpected".into())
+    match session.kind {
+        SessionType::Upload => {
+            network::upload(
+                stream,
+                &session.source_path,
+                session.destination.as_os_str(),
+                &session.source_name,
+                multi_progress_bar,
+            )
+            .await?;
         }
-        ScpStatus::Error => read_error(stream).await?,
-    }
-}
-
-async fn recv_success(mut stream: &mut Stream) -> Res<()> {
-    match ScpStatus::from_byte(read_exact!(stream, 1).await?)
-        .ok_or("Invalid status received")?
-    {
-        ScpStatus::Continue => {
-            Err("Continue received, but success was expected".into())
+        SessionType::Download => {
+            network::download(
+                stream,
+                session.source_path.as_os_str(),
+                &session.destination,
+                &session.source_name,
+                multi_progress_bar,
+            )
+            .await?;
         }
-        ScpStatus::Success => Ok(()),
-        ScpStatus::Error => read_error(stream).await?,
+        SessionType::Shell => unreachable!(),
     }
-}
-
-async fn read_error(mut stream: &mut Stream) -> Res<!> {
-    let error_length = u32::from_be_bytes(read_exact!(stream, 4).await?);
-    let error = read!(stream, error_length as usize).await?;
-
-    eprint!("Remote "); // Will show up as 'Remote Error: etc'
-    Err(String::from_utf8(error)?.into())
+    Ok::<(), BoxedError>(())
 }
