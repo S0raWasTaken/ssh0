@@ -1,5 +1,5 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use libssh0::{DropGuard, common::SCP_BUFFER_SIZE};
+use libssh0::{DropGuard, common::scp::SCP_BUFFER_SIZE};
 use std::{
     io,
     path::{Path, PathBuf},

@@ -6,7 +6,7 @@ use std::{
 
 use libssh0::{
     DropGuard,
-    common::{SCP_BUFFER_SIZE, ScpStatus},
+    common::scp::{ClientProbeMessage, SCP_BUFFER_SIZE, ScpStatus},
     log, read, read_exact,
 };
 use tokio::{
@@ -16,6 +16,67 @@ use tokio::{
 };
 
 use crate::{Res, Stream, sessions::SessionInfo};
+
+pub async fn handle_probe(
+    mut stream: Stream,
+    session: SessionInfo,
+) -> Res<Stream> {
+    match ClientProbeMessage::from_byte(read_exact!(stream, 1).await?) {
+        Some(ClientProbeMessage::List) => {
+            if let Err(error) = list_directory(&mut stream, session).await {
+                write_error_and_kill(&mut stream, &error.to_string()).await?;
+            }
+        }
+        None => {
+            write_error_and_kill(&mut stream, "Unsupported").await?;
+        }
+    }
+    Ok(stream)
+}
+
+// Sends just file names in the requested directory
+// get_path
+// send step if entries are available, or success if dir is empty
+// send entries vector length
+// for each entry:
+//   send entry length
+//   send entry bytes
+//
+// send success
+async fn list_directory(stream: &mut Stream, session: SessionInfo) -> Res<()> {
+    let path = get_path(stream).await?;
+    log!("Probe {session}: ls {}", path.display());
+
+    let mut entries = Vec::new();
+    while let Some(entry) =
+        tokio::fs::read_dir(&path).await?.next_entry().await?
+    {
+        if entry.file_type().await?.is_file() {
+            entries.push(entry.file_name());
+        }
+    }
+
+    if entries.is_empty() {
+        success(stream).await?; // Empty directory
+    } else {
+        step(stream).await?;
+    }
+
+    let entries_len = u32::to_be_bytes(u32::try_from(entries.len())?);
+    stream.write_all(&entries_len).await?;
+
+    for entry in entries {
+        let entry_len = u32::to_be_bytes(u32::try_from(entry.len())?);
+        stream.write_all(&entry_len).await?;
+
+        stream.write_all(entry.as_encoded_bytes()).await?;
+        step(stream).await?;
+    }
+
+    success(stream).await?;
+
+    Ok(())
+}
 
 // Server <- Client
 pub async fn handle_upload(
@@ -244,6 +305,10 @@ async fn write_error_and_kill(stream: &mut Stream, error: &str) -> Res<!> {
     stream.write_all(&u32::try_from(error.len())?.to_be_bytes()).await?;
     stream.write_all(error.as_bytes()).await?;
 
+    kill_stream(stream, error).await
+}
+
+async fn kill_stream(stream: &mut Stream, error: &str) -> Res<!> {
     stream.flush().await?;
     stream.shutdown().await?;
     Err(error.into())

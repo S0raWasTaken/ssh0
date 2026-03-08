@@ -104,7 +104,7 @@ async fn file_transfer_session(
             )
             .await?;
         }
-        SessionType::Shell => unreachable!(),
+        SessionType::Shell | SessionType::Probe => unreachable!(),
     }
     Ok::<(), BoxedError>(())
 }

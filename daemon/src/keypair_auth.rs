@@ -46,6 +46,7 @@ pub async fn authenticate_and_accept_connection(
         }
         SessionType::Upload => scp::handle_upload(socket, session).await?,
         SessionType::Download => scp::handle_download(socket, session).await?,
+        SessionType::Probe => scp::handle_probe(socket, session).await?,
     };
 
     socket.shutdown().await?;

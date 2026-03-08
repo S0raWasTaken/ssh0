@@ -3,7 +3,7 @@ use crate::{
     io::{receive_file, send_file},
 };
 use indicatif::MultiProgress;
-use libssh0::{Res, common::ScpStatus, read, read_exact};
+use libssh0::{Res, common::scp::ScpStatus, read, read_exact};
 use std::{ffi::OsStr, path::Path};
 use tokio::io::AsyncWriteExt;
 

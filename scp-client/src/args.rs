@@ -124,7 +124,7 @@ impl Args {
                 };
                 (host, sources, expand_tilde(dest.clone())?)
             }
-            SessionType::Shell => unreachable!(),
+            SessionType::Shell | SessionType::Probe => unreachable!(),
         };
 
         Ok(Self {
