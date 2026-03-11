@@ -100,7 +100,7 @@ pub fn load_private_key(key_path: Option<PathBuf>) -> Res<PrivateKey> {
 /// computed, or the server rejects the authentication.
 pub async fn authenticate(
     mut stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
-    private_key: PrivateKey,
+    private_key: &PrivateKey,
     session_type: SessionType,
     print_banner: bool,
 ) -> Res<()> {

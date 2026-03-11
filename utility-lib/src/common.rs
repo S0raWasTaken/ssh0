@@ -54,6 +54,6 @@ pub mod scp {
     #[repr(u8)]
     #[derive(FromByte, ToByte)]
     pub enum ClientProbeMessage {
-        List = 0x00,
+        Glob = 0x00,
     }
 }

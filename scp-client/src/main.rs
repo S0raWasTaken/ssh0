@@ -12,7 +12,7 @@ use ssh_key::PrivateKey;
 use tokio::{net::TcpStream, task::JoinSet};
 use tokio_rustls::client::TlsStream;
 
-use crate::args::Args;
+use crate::args::{Args, FileInfo, UnparsedGlob};
 
 pub type Stream = TlsStream<TcpStream>;
 
@@ -28,45 +28,113 @@ struct Session {
 
 #[tokio::main]
 async fn main() -> Res<()> {
-    let Args { session_type, source_files, destination, key_path, host, port } =
-        Args::from_argh()?;
-
+    let Args {
+        session_type,
+        source_files,
+        unparsed_globs,
+        destination,
+        key_path,
+        host,
+        port,
+        task_limit,
+    } = Args::from_argh()?;
+    let mut print_banner = true;
     let private_key = load_private_key(key_path)?;
+
+    let source_files = parse_globs(
+        source_files,
+        unparsed_globs,
+        &private_key,
+        session_type,
+        &mut print_banner,
+        port,
+    )
+    .await?;
 
     let multi_progress_bar = MultiProgress::new();
 
     let mut task_set = JoinSet::new();
 
-    let mut print_banner = true;
+    let mut sources = source_files.into_iter();
 
-    for source in source_files {
-        let multi_progress = multi_progress_bar.clone();
-
+    for source in sources.by_ref().take(task_limit) {
         let session = Session {
             host: host.clone(),
             port,
-            source_path: source.path,
-            source_name: source.name,
+            source_path: source.path.clone(),
+            source_name: source.name.clone(),
             destination: destination.clone(),
             private_key: private_key.clone(),
             kind: session_type,
         };
-
         task_set.spawn(file_transfer_session(
             session,
-            multi_progress,
+            multi_progress_bar.clone(),
             print_banner,
         ));
         print_banner = false;
     }
 
-    multi_progress_bar.set_move_cursor(true);
-
     while let Some(result) = task_set.join_next().await {
         result??;
+
+        if let Some(source) = sources.next() {
+            let session = Session {
+                host: host.clone(),
+                port,
+                source_path: source.path.clone(),
+                source_name: source.name.clone(),
+                destination: destination.clone(),
+                private_key: private_key.clone(),
+                kind: session_type,
+            };
+            task_set.spawn(file_transfer_session(
+                session,
+                multi_progress_bar.clone(),
+                print_banner,
+            ));
+        }
     }
 
+    multi_progress_bar.set_move_cursor(true);
+
     Ok(())
+}
+
+async fn parse_globs(
+    source_files: Vec<FileInfo>,
+    unparsed_globs: Vec<UnparsedGlob>,
+    private_key: &PrivateKey,
+    session_type: SessionType,
+    print_banner: &mut bool,
+    port: u16,
+) -> Res<Vec<FileInfo>> {
+    if matches!(session_type, SessionType::Upload) || unparsed_globs.is_empty()
+    {
+        return Ok(source_files);
+    }
+
+    let mut parsed_globs = Vec::new();
+
+    for UnparsedGlob { path, host } in unparsed_globs {
+        let mut stream = connect_tls(&host, port).await?;
+        timeout(authenticate(
+            &mut stream,
+            private_key,
+            SessionType::Probe,
+            *print_banner,
+        ))
+        .await??;
+        *print_banner = false;
+
+        let list = network::probe_parse_glob(stream, path).await?;
+        parsed_globs.push(list);
+    }
+
+    Ok(vec![source_files, parsed_globs.into_iter().flatten().collect()]
+        .into_iter()
+        .flatten()
+        .collect())
 }
 
 async fn file_transfer_session(
@@ -77,7 +145,7 @@ async fn file_transfer_session(
     let mut stream = connect_tls(&session.host, session.port).await?;
     timeout(authenticate(
         &mut stream,
-        session.private_key,
+        &session.private_key,
         session.kind,
         print_banner,
     ))

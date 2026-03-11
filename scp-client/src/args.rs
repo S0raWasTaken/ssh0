@@ -21,12 +21,16 @@ struct CommandArgs {
     /// private key path
     #[argh(option, short = 'i')]
     pub key_path: Option<PathBuf>,
+
+    /// number of transfers at once (default: 15)
+    #[argh(option, short = 'u', default = "15")]
+    pub task_limit: usize,
 }
 
 #[derive(Clone)]
 pub enum ScpTarget {
     Local(PathBuf),
-    Remote { host: String, path: PathBuf },
+    Remote { host: String, path: PathBuf, glob: bool },
 }
 
 impl FromArgValue for ScpTarget {
@@ -35,6 +39,7 @@ impl FromArgValue for ScpTarget {
             Ok(Self::Remote {
                 host: host.to_string(),
                 path: PathBuf::from(path),
+                glob: path.contains('*'),
             })
         } else {
             Ok(Self::Local(PathBuf::from(value)))
@@ -42,6 +47,7 @@ impl FromArgValue for ScpTarget {
     }
 }
 
+#[derive(Debug)]
 pub struct FileInfo {
     pub path: PathBuf,
     pub name: String,
@@ -53,33 +59,89 @@ impl FileInfo {
     }
 }
 
+pub struct UnparsedGlob {
+    pub path: PathBuf,
+    pub host: String,
+}
+
+impl From<ScpTarget> for UnparsedGlob {
+    fn from(value: ScpTarget) -> Self {
+        match value {
+            ScpTarget::Local(_) => panic!("This shouldn't happen"),
+            ScpTarget::Remote { host, path, glob: true } => Self { path, host },
+            ScpTarget::Remote { glob: false, .. } => {
+                panic!("This shouldn't happen either")
+            }
+        }
+    }
+}
+
 pub struct Args {
     pub session_type: SessionType,
     pub source_files: Vec<FileInfo>,
+    pub unparsed_globs: Vec<UnparsedGlob>,
     pub destination: PathBuf,
     pub key_path: Option<PathBuf>,
     pub host: String,
     pub port: u16,
+    pub task_limit: usize,
 }
+
+const INVALID: &str = "Invalid";
 
 const MIXED_ARGS_ERROR: &str = "\
 Mixed arguments found, can't determine what to do. \
-(Source files must not contain both local and host entries)";
+(Source files must not contain both local and host entries).
+
+This is supported:
+    scp0 host:path1 host:path2 host:path3 ~/local_path
+    scp0 ~/local_path1 ~/local_path2 ~/local_path3 host:path
+
+This makes no sense:
+    scp0 host:path1 ~/local_path1 host:path2";
+
+const EASTER_EGG: &str = "\
+Nice try. The program would quit instantly anyway :)";
+
+const INVALID_ARGS: &str = "\
+Invalid arguments: exactly one source and one dcestination must be remote";
+
+const GLOB_ON_DESTINATION: &str = "Glob not supported on destination";
 
 impl Args {
     pub fn from_argh() -> Res<Self> {
         let args: CommandArgs = argh::from_env();
+        if args.task_limit == 0 {
+            eprintln!("{EASTER_EGG}");
+            return Err(INVALID.into());
+        }
+
         let len = args.files.len();
 
         if len < 2 {
-            return Err("invalid arguments: exactly one source and one destination must be remote".into());
+            eprintln!("{INVALID_ARGS}");
+            return Err(INVALID.into());
         }
 
         let source_files = &args.files[..len - 1];
         let destination = &args.files[len - 1];
 
-        if args_are_mixed(source_files, destination) {
-            return Err(MIXED_ARGS_ERROR.into());
+        let (globs, source_files): (Vec<_>, Vec<_>) =
+            source_files.iter().partition(|target| {
+                matches!(target, ScpTarget::Remote { glob: true, .. })
+            });
+
+        let unparsed_globs: Vec<UnparsedGlob> =
+            globs.into_iter().cloned().map(UnparsedGlob::from).collect();
+
+        if matches!(destination, ScpTarget::Remote { glob: true, .. }) {
+            eprintln!("{GLOB_ON_DESTINATION}");
+            return Err(INVALID.into());
+        }
+
+        if args_are_mixed(&source_files, destination) {
+            eprintln!("{MIXED_ARGS_ERROR}");
+            return Err(INVALID.into());
         }
 
         let session_type = match destination {
@@ -89,7 +151,7 @@ impl Args {
 
         let (host, source_files, destination) = match session_type {
             SessionType::Upload => {
-                let ScpTarget::Remote { host, path } = destination else {
+                let ScpTarget::Remote { host, path, .. } = destination else {
                     unreachable!()
                 };
                 let sources = source_files
@@ -107,6 +169,9 @@ impl Args {
                     .find_map(|f| match f {
                         ScpTarget::Remote { host, .. } => Some(host.clone()),
                         ScpTarget::Local(_) => None,
+                    })
+                    .or_else(|| {
+                        unparsed_globs.iter().map(|f| f.host.clone()).next()
                     })
                     .ok_or("No remote source found")?;
                 let sources = source_files
@@ -134,12 +199,17 @@ impl Args {
             host,
             key_path: args.key_path,
             port: args.port,
+            unparsed_globs,
+            task_limit: args.task_limit,
         })
     }
 }
 
 // Prevents `scp0 host:~/file1 local_file1 host:~/destination_dir` (or vice versa)
-fn args_are_mixed(source_files: &[ScpTarget], destination: &ScpTarget) -> bool {
+fn args_are_mixed(
+    source_files: &[&ScpTarget],
+    destination: &ScpTarget,
+) -> bool {
     let destination_is_local = matches!(destination, ScpTarget::Local(_));
     source_files
         .iter()

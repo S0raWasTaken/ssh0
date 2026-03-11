@@ -1,11 +1,56 @@
 use crate::{
     Stream,
+    args::FileInfo,
     io::{receive_file, send_file},
 };
 use indicatif::MultiProgress;
-use libssh0::{Res, common::scp::ScpStatus, read, read_exact};
-use std::{ffi::OsStr, path::Path};
+use libssh0::{
+    Res,
+    common::scp::{ClientProbeMessage, ScpStatus},
+    read, read_exact,
+};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 use tokio::io::AsyncWriteExt;
+
+pub async fn probe_parse_glob(
+    mut stream: Stream,
+    path: PathBuf,
+) -> Res<Vec<FileInfo>> {
+    stream.write_all(&ClientProbeMessage::Glob.to_byte()).await?;
+    send_path(&mut stream, path.as_os_str()).await?;
+
+    match recv_any(&mut stream).await? {
+        ScpStatus::Continue => (), // Continue
+        ScpStatus::Success => return Ok(Vec::new()), // Empty directory
+        ScpStatus::Error => unreachable!(),
+    }
+
+    let entries_len =
+        u32::from_be_bytes(read_exact!(stream, 4).await?) as usize;
+    let mut entries = Vec::new();
+
+    for _ in 0..entries_len {
+        let entry_len =
+            u32::from_be_bytes(read_exact!(stream, 4).await?) as usize;
+        let entry = String::from_utf8(read!(stream, entry_len).await?)?;
+        let path = PathBuf::from(entry);
+        entries.push(FileInfo {
+            path: path.clone(),
+            name: path
+                .file_name()
+                .ok_or("This shouldn't happen ever")?
+                .to_string_lossy()
+                .to_string(),
+        });
+        recv_ok(&mut stream).await?;
+    }
+
+    recv_success(&mut stream).await?;
+    Ok(entries)
+}
 
 // Client -> Server
 //
@@ -27,16 +72,7 @@ pub async fn upload(
     file_name: &str,
     multi_progress_bar: MultiProgress,
 ) -> Res<()> {
-    // send [remote output_path size]
-    let remote_output_path_size =
-        u32::to_be_bytes(u32::try_from(remote_output.len())?);
-
-    stream.write_all(&remote_output_path_size).await?;
-    recv_ok(&mut stream).await?;
-
-    // send [remote output_path bytes]
-    stream.write_all(remote_output.as_encoded_bytes()).await?;
-    recv_ok(&mut stream).await?;
+    send_path(&mut stream, remote_output).await?;
 
     // send [local file_name size]
     let local_file_name_size =
@@ -76,16 +112,7 @@ pub async fn download(
     file_name: &str,
     multi_progress_bar: MultiProgress,
 ) -> Res<()> {
-    // send [remote file_path size]
-    let remote_file_path_size =
-        u32::to_be_bytes(u32::try_from(remote_source.len())?);
-
-    stream.write_all(&remote_file_path_size).await?;
-    recv_ok(&mut stream).await?;
-
-    // send [remote file_path bytes]
-    stream.write_all(remote_source.as_encoded_bytes()).await?;
-    recv_ok(&mut stream).await?;
+    send_path(&mut stream, remote_source).await?;
     recv_ok(&mut stream).await?;
 
     // recv [remote file size]
@@ -108,31 +135,45 @@ pub async fn download(
     Ok(())
 }
 
-pub async fn recv_ok(mut stream: &mut Stream) -> Res<()> {
-    match ScpStatus::from_byte(read_exact!(stream, 1).await?)
-        .ok_or("Invalid status received")?
-    {
+async fn recv_ok(stream: &mut Stream) -> Res<()> {
+    match recv_any(stream).await? {
         ScpStatus::Continue => Ok(()),
         ScpStatus::Success => {
             Err("Success received, but it was unexpected".into())
         }
-        ScpStatus::Error => read_error(stream).await?,
+        ScpStatus::Error => unreachable!(),
     }
 }
 
-pub async fn recv_success(mut stream: &mut Stream) -> Res<()> {
-    match ScpStatus::from_byte(read_exact!(stream, 1).await?)
-        .ok_or("Invalid status received")?
-    {
+async fn recv_success(stream: &mut Stream) -> Res<()> {
+    match recv_any(stream).await? {
         ScpStatus::Continue => {
             Err("Continue received, but success was expected".into())
         }
         ScpStatus::Success => Ok(()),
-        ScpStatus::Error => read_error(stream).await?,
+        ScpStatus::Error => unreachable!(),
     }
 }
 
-pub async fn read_error(mut stream: &mut Stream) -> Res<!> {
+async fn recv_any(mut stream: &mut Stream) -> Res<ScpStatus> {
+    match ScpStatus::from_byte(read_exact!(stream, 1).await?)
+        .ok_or("Invalid status received")?
+    {
+        ScpStatus::Error => read_error(stream).await?,
+        status => Ok(status),
+    }
+}
+
+async fn send_path(stream: &mut Stream, path: &OsStr) -> Res<()> {
+    let remote_output_path_size = u32::to_be_bytes(u32::try_from(path.len())?);
+    stream.write_all(&remote_output_path_size).await?;
+    recv_ok(stream).await?;
+    stream.write_all(path.as_encoded_bytes()).await?;
+    recv_ok(stream).await?;
+    Ok(())
+}
+
+async fn read_error(mut stream: &mut Stream) -> Res<!> {
     let error_length = u32::from_be_bytes(read_exact!(stream, 4).await?);
     let error = read!(stream, error_length as usize).await?;
 

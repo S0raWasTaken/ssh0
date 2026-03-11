@@ -5,15 +5,18 @@ use std::{
 };
 
 use libssh0::{
-    DropGuard,
+    BoxedError, DropGuard,
     common::scp::{ClientProbeMessage, SCP_BUFFER_SIZE, ScpStatus},
     log, read, read_exact,
 };
+
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
     runtime::Handle,
+    task::spawn_blocking,
 };
+use wax::{Glob, walk::Entry};
 
 use crate::{Res, Stream, sessions::SessionInfo};
 
@@ -22,8 +25,8 @@ pub async fn handle_probe(
     session: SessionInfo,
 ) -> Res<Stream> {
     match ClientProbeMessage::from_byte(read_exact!(stream, 1).await?) {
-        Some(ClientProbeMessage::List) => {
-            if let Err(error) = list_directory(&mut stream, session).await {
+        Some(ClientProbeMessage::Glob) => {
+            if let Err(error) = ls_expand_glob(&mut stream, session).await {
                 write_error_and_kill(&mut stream, &error.to_string()).await?;
             }
         }
@@ -43,29 +46,40 @@ pub async fn handle_probe(
 //   send entry bytes
 //
 // send success
-async fn list_directory(stream: &mut Stream, session: SessionInfo) -> Res<()> {
+async fn ls_expand_glob(stream: &mut Stream, session: SessionInfo) -> Res<()> {
     let path = get_path(stream).await?;
     log!("Probe {session}: ls {}", path.display());
 
-    let mut entries = Vec::new();
-    while let Some(entry) =
-        tokio::fs::read_dir(&path).await?.next_entry().await?
-    {
-        if entry.file_type().await?.is_file() {
-            entries.push(entry.file_name());
-        }
+    let matched_paths = spawn_blocking(move || {
+        let path = path.as_os_str().to_string_lossy();
+        let glob = Glob::new(&path)?;
+        let paths = glob
+            .walk(expand_tilde(PathBuf::from("~"))?)
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                if e.file_type().is_file() {
+                    Some(e.path().as_os_str().to_os_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok::<_, BoxedError>(paths)
+    })
+    .await??;
+
+    if matched_paths.is_empty() {
+        success(stream).await?;
+        return Ok(());
     }
 
-    if entries.is_empty() {
-        success(stream).await?; // Empty directory
-    } else {
-        step(stream).await?;
-    }
+    step(stream).await?;
 
-    let entries_len = u32::to_be_bytes(u32::try_from(entries.len())?);
+    let entries_len = u32::to_be_bytes(u32::try_from(matched_paths.len())?);
     stream.write_all(&entries_len).await?;
 
-    for entry in entries {
+    for entry in matched_paths {
         let entry_len = u32::to_be_bytes(u32::try_from(entry.len())?);
         stream.write_all(&entry_len).await?;
 
@@ -274,7 +288,7 @@ async fn get_path(mut stream: &mut Stream) -> Res<PathBuf> {
 
     step(stream).await?;
 
-    expand_tilde(PathBuf::from(path_utf8))
+    expand_tilde(PathBuf::from(path_utf8.replace('\\', "/")))
 }
 
 fn expand_tilde(path: PathBuf) -> Res<PathBuf> {

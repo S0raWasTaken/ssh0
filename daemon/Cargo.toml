@@ -17,6 +17,7 @@ dashmap = "6.1.0"
 argh = "0.1.14"
 notify = "8.2.0"
 tokio-util = "0.7.18"
+wax = { version = "0.7.0", features = ["walk"] }
 
 [lints]
 workspace = true
