@@ -15,6 +15,9 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
+const MAX_GLOB_ENTRIES: usize = 65_536;
+const MAX_PROTOCOL_STRING_LEN: usize = 4096;
+
 pub async fn probe_parse_glob(
     mut stream: Stream,
     path: PathBuf,
@@ -31,11 +34,19 @@ pub async fn probe_parse_glob(
 
     let entries_len =
         u32::from_be_bytes(read_exact!(stream, 4).await?) as usize;
-    let mut entries = Vec::new();
+    if entries_len > MAX_GLOB_ENTRIES {
+        return Err("Too many glob matches returned by server".into());
+    }
+    let mut entries = Vec::with_capacity(entries_len);
 
     for _ in 0..entries_len {
         let entry_len =
             u32::from_be_bytes(read_exact!(stream, 4).await?) as usize;
+
+        if entry_len > MAX_PROTOCOL_STRING_LEN {
+            return Err("Glob entry path is too long".into());
+        }
+
         let entry = String::from_utf8(read!(stream, entry_len).await?)?;
         let path = PathBuf::from(entry);
         entries.push(FileInfo {
@@ -185,8 +196,12 @@ async fn send_path(stream: &mut Stream, path: &OsStr) -> Res<()> {
 }
 
 async fn read_error(mut stream: &mut Stream) -> Res<!> {
-    let error_length = u32::from_be_bytes(read_exact!(stream, 4).await?);
-    let error = read!(stream, error_length as usize).await?;
+    let error_length =
+        u32::from_be_bytes(read_exact!(stream, 4).await?) as usize;
+    if error_length > MAX_PROTOCOL_STRING_LEN {
+        return Err("Remote error frame is too large".into());
+    }
+    let error = read!(stream, error_length).await?;
 
     eprint!("Remote "); // Will show up as 'Remote Error: etc'
     Err(String::from_utf8(error)?.into())
