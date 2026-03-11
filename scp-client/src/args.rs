@@ -35,15 +35,47 @@ pub enum ScpTarget {
 
 impl FromArgValue for ScpTarget {
     fn from_arg_value(value: &str) -> Result<Self, String> {
-        if let Some((host, path)) = value.rsplit_once(':') {
-            Ok(Self::Remote {
+        let is_local = matches!(
+            value.as_bytes(),
+            [b'/' | b'~', ..]
+                | [b'.', b'/' | b'\\', ..]
+                | [b'.', b'.', b'/' | b'\\', ..] // ../ or ..\
+        );
+
+        if is_local {
+            return Ok(Self::Local(PathBuf::from(value)));
+        }
+
+        if let Some(bracket_end) = value.find("]:") {
+            let host = &value[..=bracket_end]; // includes the ]
+            let path = &value[bracket_end + 2..];
+            return Ok(Self::Remote {
                 host: host.to_string(),
                 path: PathBuf::from(path),
                 glob: path.contains('*'),
-            })
-        } else {
-            Ok(Self::Local(PathBuf::from(value)))
+            });
         }
+
+        if let Some(rest) =
+            value.strip_prefix(|c: char| c.is_ascii_alphabetic())
+            && (rest.starts_with(":\\") || rest.starts_with(":/"))
+        {
+            return Ok(Self::Local(PathBuf::from(value)));
+        }
+
+        if let Some((host, path)) = value.split_once(':')
+            && !host.is_empty()
+            && !host.contains('/')
+            && !host.contains('\\')
+        {
+            return Ok(Self::Remote {
+                host: host.to_string(),
+                path: PathBuf::from(path),
+                glob: path.contains('*'),
+            });
+        }
+
+        Ok(Self::Local(PathBuf::from(value)))
     }
 }
 
@@ -164,7 +196,7 @@ impl Args {
                 (
                     sources,
                     FileInfo::new(
-                        expand_tilde(path.clone())?,
+                        path.clone(),
                         String::new(), /*Won't be used*/
                         Some(host.clone()),
                     ),
@@ -237,8 +269,23 @@ fn expand_tilde(path: PathBuf) -> io::Result<PathBuf> {
 pub fn validate_local_source(path: PathBuf) -> io::Result<FileInfo> {
     let path = expand_tilde(path)?;
 
+    #[cfg(windows)]
+    if path.to_str().is_some_and(|s| s.get(2..).unwrap_or("").contains(':')) {
+        return Err(io::Error::new(
+            InvalidData,
+            format!(
+                "Colons are not valid in Windows filenames: {}. \
+                 Use a path without colons.",
+                path.display()
+            ),
+        ));
+    }
+
     if !path.try_exists()? {
-        return Err(io::Error::new(NotFound, "Local file not found"));
+        return Err(io::Error::new(
+            NotFound,
+            format!("Local file not found: {}", path.display()),
+        ));
     }
 
     if path.is_dir() {
