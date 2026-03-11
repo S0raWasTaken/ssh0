@@ -22,7 +22,7 @@ struct CommandArgs {
     #[argh(option, short = 'i')]
     pub key_path: Option<PathBuf>,
 
-    /// number of transfers at once (default: 15)du
+    /// number of transfers at once (default: 15)
     #[argh(option, short = 'u', default = "15")]
     pub task_limit: usize,
 }
