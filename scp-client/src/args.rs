@@ -56,6 +56,14 @@ impl FromArgValue for ScpTarget {
             });
         }
 
+        #[cfg(windows)]
+        if value.len() >= 2
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':'
+        {
+            return Ok(Self::Local(PathBuf::from(value)));
+        }
+
         if let Some(rest) =
             value.strip_prefix(|c: char| c.is_ascii_alphabetic())
             && (rest.starts_with(":\\") || rest.starts_with(":/"))
@@ -121,15 +129,21 @@ pub struct Args {
 
 const INVALID: &str = "Invalid";
 
-const MIXED_ARGS_ERROR: &str = "\
-Mixed arguments found, can't determine what to do. \
-(Source files must not contain both local and host entries).
+const INVALID_SOURCE_DEST: &str = "\
+Invalid source/destination combination. Sources and destination must be on \
+opposite sides (local ↔ remote).
 
-This is supported:
-    scp0 host:path1 host:path2 host:path3 ~/local_path
-    scp0 ~/local_path1 ~/local_path2 ~/local_path3 host:path
+Valid:
+    scp0 host:path1 host:path2 ~/local_dest
+    scp0 ~/local1 ~/local2 host:remote_dest
 
-This makes no sense:
+Invalid (all local):
+    scp0 ~/file1 ~/file2 ~/dest
+
+Invalid (all remote):
+    scp0 host:file1 host:file2 host:dest
+
+Invalid (mixed sources):
     scp0 host:path1 ~/local_path1 host:path2";
 
 const EASTER_EGG: &str = "\
@@ -179,7 +193,7 @@ impl Args {
         }
 
         if args_are_mixed(&source_files, destination) {
-            eprintln!("{MIXED_ARGS_ERROR}");
+            eprintln!("{INVALID_SOURCE_DEST}");
             return Err(INVALID.into());
         }
 
