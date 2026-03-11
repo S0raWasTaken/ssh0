@@ -90,7 +90,8 @@ pub async fn upload(
     if let Err(error) = send_file(&mut stream, source, multi_progress_bar).await
     {
         eprintln!("Local error: {error}");
-        read_error(&mut stream).await?;
+        stream.shutdown().await.ok();
+        return Err(error.into());
     }
 
     recv_success(&mut stream).await?;
@@ -130,7 +131,8 @@ pub async fn download(
     .await
     {
         eprintln!("Local error: {error}");
-        read_error(&mut stream).await?;
+        stream.shutdown().await.ok();
+        return Err(error.into());
     }
 
     recv_success(&mut stream).await?;
