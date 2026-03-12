@@ -155,6 +155,9 @@ Invalid arguments: provide at least one source and one destination";
 
 const GLOB_ON_DESTINATION: &str = "Glob not supported on destination";
 
+const MULTI_DOWNLOAD_NOT_DIR: &str =
+    "Destination must be a directory when downloading multiple files";
+
 impl Args {
     pub fn from_argh() -> Res<Self> {
         let args: CommandArgs = argh::from_env();
@@ -202,56 +205,8 @@ impl Args {
             ScpTarget::Remote { .. } => SessionType::Upload,
         };
 
-        let (source_files, destination) = match session_type {
-            SessionType::Upload => {
-                let ScpTarget::Remote { path, host, .. } = destination else {
-                    unreachable!()
-                };
-                let sources = source_files
-                    .iter()
-                    .map(|f| match f {
-                        ScpTarget::Local(p) => validate_local_source(p.clone()),
-                        ScpTarget::Remote { .. } => unreachable!(),
-                    })
-                    .collect::<io::Result<Vec<_>>>()?;
-                (
-                    sources,
-                    FileInfo::new(
-                        path.clone(),
-                        String::new(), /*Won't be used*/
-                        Some(host.clone()),
-                    ),
-                )
-            }
-            SessionType::Download => {
-                let sources = source_files
-                    .iter()
-                    .map(|f| match f {
-                        ScpTarget::Remote { path, host, .. } => {
-                            let name = extract_remote_filename(path)?;
-                            Ok(FileInfo::new(
-                                path.clone(),
-                                name,
-                                Some(host.clone()),
-                            ))
-                        }
-                        ScpTarget::Local(_) => unreachable!(),
-                    })
-                    .collect::<io::Result<Vec<_>>>()?;
-                let ScpTarget::Local(dest) = destination else {
-                    unreachable!()
-                };
-                (
-                    sources,
-                    FileInfo::new(
-                        expand_tilde(dest.clone())?,
-                        String::new(),
-                        None,
-                    ),
-                )
-            }
-            SessionType::Shell | SessionType::Probe => unreachable!(),
-        };
+        let (source_files, destination) =
+            parse_src_dest(destination, &source_files, session_type)?;
 
         Ok(Self {
             session_type,
@@ -263,6 +218,62 @@ impl Args {
             task_limit: args.task_limit,
         })
     }
+}
+
+fn parse_src_dest(
+    destination: &ScpTarget,
+    source_files: &[&ScpTarget],
+    session_type: SessionType,
+) -> Res<(Vec<FileInfo>, FileInfo)> {
+    Ok(match session_type {
+        SessionType::Upload => {
+            let ScpTarget::Remote { path, host, .. } = destination else {
+                unreachable!()
+            };
+            let sources = source_files
+                .iter()
+                .map(|f| match f {
+                    ScpTarget::Local(p) => validate_local_source(p.clone()),
+                    ScpTarget::Remote { .. } => unreachable!(),
+                })
+                .collect::<io::Result<Vec<_>>>()?;
+            (
+                sources,
+                FileInfo::new(
+                    path.clone(),
+                    String::new(), /*Won't be used*/
+                    Some(host.clone()),
+                ),
+            )
+        }
+        SessionType::Download => {
+            let ScpTarget::Local(dest) = destination else { unreachable!() };
+            let dest = expand_tilde(dest.clone())?;
+            if source_files.len() > 1 && !dest.is_dir() {
+                return Err(io::Error::new(
+                    InvalidData,
+                    MULTI_DOWNLOAD_NOT_DIR,
+                )
+                .into());
+            }
+            let sources = source_files
+                .iter()
+                .map(|f| match f {
+                    ScpTarget::Remote { path, host, .. } => {
+                        let name = extract_remote_filename(path)?;
+                        Ok(FileInfo::new(
+                            path.clone(),
+                            name,
+                            Some(host.clone()),
+                        ))
+                    }
+                    ScpTarget::Local(_) => unreachable!(),
+                })
+                .collect::<io::Result<Vec<_>>>()?;
+            (sources, FileInfo::new(dest, String::new(), None))
+        }
+        SessionType::Shell | SessionType::Probe => unreachable!(),
+    })
 }
 
 // Prevents `scp0 host:~/file1 local_file1 host:~/destination_dir` (or vice versa)
