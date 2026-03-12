@@ -55,3 +55,5 @@ On first connection you'll be asked to verify the server's TLS fingerprint.
 ## Known Limitations
 
 - No port forwarding (Not planned)
+- No user login (Not planned)
+- No path traversal protection (You're not even supposed to run this as root)
